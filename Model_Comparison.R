@@ -42,7 +42,7 @@ model.size <- 20
 decay.threshold <- 0.001
 max.iterations <- 1000
 
-for (i is 1)
+for (i is 20)
 {
   # Superimpose load current on fault current
   #logger.results.training$RMSI1 <- (logger.results.training$RMSI1 + logger.results.training$RMSI2)
