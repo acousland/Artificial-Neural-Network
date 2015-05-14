@@ -1,44 +1,45 @@
+#########################################################
+# Artificial Neural Network Implementation 
+#
+# Identification of faults through supervised learning 
+# of an artificial neural network
+# 
+# - Aaron Cousland 14/05/2015
+########################################################
+
 require (neuralnet)    # Nerual Network Package
 require (RODBC)        # Load RODBC package
-require (lubridate)   # Required to manipulate dates
+require (lubridate)    # Required to manipulate dates
 
-# Create a connection to the database called "channel"
+# Create a connection to the database called "RTV"
+odbcCloseAll()
 local.connection <- odbcConnect("RTV", believeNRows=FALSE)
 
-# Query the database and put the results into the data frame "LoggingResults"
-logger.results <- sqlQuery(local.connection, 
-                           "SELECT DATEANDTIME, SECONDS, RMSI1, RMSI3 from ELSPEC_LOGGER_HARMONICS;")
+# Query the database and put the results into the data frame logging.results
+logger.results <- sqlQuery(local.connection,"SELECT * FROM ELSPEC.RMS_TRAINING where ts between '17/Mar/15 08:00:00 AM' and '17/Mar/15 03:00:00 PM';")
+odbcCloseAll()
 
-test.times <- sqlQuery(local.connection, "SELECT * from TEST_TIMES_CONFIRMED;")
+# Order by timestamp and force local timestamp
+logger.results <- logger.results[with(logger.results, order(logger.results$TS)),]
+logger.results$TS <- force_tz(logger.results$TS,"UTC")
 
-# Initialise timestamps to consistent format
-logger.results$TIMESTAMP <- dmy_hm(logger.results$DATEANDTIME) + as.numeric(logger.results$SECONDS)
+# Create Training Dataset
+StartTime <- as.POSIXct("2015-03-17 09:00:00", format = "%Y-%m-%d %H:%M:%OS", tz = "UTC")
+EndTime <- as.POSIXct("2015-03-17 11:00:00", format = "%Y-%m-%d %H:%M:%OS", tz = "UTC")
+logger.results.training <- subset(logger.results, logger.results$TS >= StartTime & logger.results$TS <= EndTime)
 
-logger.results$testing <- 0
+# Create Validation Dataset
+StartTime <- as.POSIXct("2015-03-17 08:00:00", format = "%Y-%m-%d %H:%M:%OS", tz = "UTC")
+EndTime <- as.POSIXct("2015-03-17 15:00:00", format = "%Y-%m-%d %H:%M:%OS", tz = "UTC")
+logger.results.validation <- subset(logger.results, logger.results$TS >= StartTime & logger.results$TS <= EndTime)
 
-for (i in 1:nrow(test.times))
-{
-  for (j in 1:nrow(logger.results))
-  {
-    if(logger.results$TIMESTAMP[j]>test.times$STARTTIME[i] && logger.results$TIMESTAMP[j]<test.times$ENDTTIME[i])
-    {
-      logger.results$testing[j] <- 1
-    }
-  }
-}
+# Generate the neural network model
+fault.network <- neuralnet(FAULT~RMSI1,logger.results.training, hidden=5, threshold=0.01)
+save(fault.network, file="test.rda")
+load("test.rda")
 
-logger.results[1,]
-
-ifelse(logger.results$TIMESTAMP == 3 , 1 ,)
-
-EndTime <- as.POSIXct("2015-03-17 12:20:00", format = "%Y-%m-%d %H:%M:%OS", tz = "UTC")
-StartTime <- as.POSIXct("2015-03-17 12:15:00", format = "%Y-%m-%d %H:%M:%OS", tz = "UTC")
-
-filtered.results <- subset(logger.results, logger.results$TIMESTAMP >= StartTime & logger.results$TIMESTAMP <= EndTime)
-
-plot(filtered.results$TIMESTAMP, filtered.results$RMSI1)
-
-
+print(fault.network)
+plot(fault.network)
 
 #Generate 50 random numbers uniformly distributed between 0 and 100
 #And store them as a dataframe
@@ -53,7 +54,7 @@ colnames(trainingdata) <- c("Input","Output")
 #Going to have 10 hidden layers
 #Threshold is a numeric value specifying the threshold for the partial
 #derivatives of the error function as stopping criteria.
-net.sqrt <- neuralnet(Output~Input,trainingdata, hidden=50, threshold=0.001)
+net.sqrt <- neuralnet(Output~Input,trainingdata, hidden=5, threshold=0.001)
 print(net.sqrt)
 
 #Plot the neural network
