@@ -7,9 +7,14 @@
 # - Aaron Cousland 14/05/2015
 ########################################################
 
-require (neuralnet)    # Nerual Network Package
+require (nnet)         # Nerual Network Package
 require (RODBC)        # Load RODBC package
 require (lubridate)    # Required to manipulate dates
+require (dplyr)        # Required for performance measurement
+require (devtools)
+require (clusterGeneration)
+
+source_url('https://gist.githubusercontent.com/fawda123/7471137/raw/466c1474d0a505ff044412703516c34f1a4684a5/nnet_plot_update.r')
 
 # Create a connection to the database called "RTV"
 odbcCloseAll()
@@ -34,44 +39,25 @@ EndTime <- as.POSIXct("2015-03-17 15:00:00", format = "%Y-%m-%d %H:%M:%OS", tz =
 logger.results.validation <- subset(logger.results, logger.results$TS >= StartTime & logger.results$TS <= EndTime)
 
 # Generate the neural network model
-fault.network <- neuralnet(FAULT~RMSI1,logger.results.training, hidden=5, threshold=0.01)
-save(fault.network, file="test.rda")
-load("test.rda")
+NeuralModel = nnet(FAULT~RMSI1, data=logger.results.training,size=20,maxit=1000,decay=.001)
+#save(fault.network, file="test.rda")
+#load("test.rda")
 
-print(fault.network)
-plot(fault.network)
+logger.results.validation$PrFault <- predict(NeuralModel,logger.results.validation) 
 
-#Generate 50 random numbers uniformly distributed between 0 and 100
-#And store them as a dataframe
-traininginput <-  as.data.frame(runif(50, min=0, max=100))
-trainingoutput <- sqrt(traininginput)
+# Measure performance
+performance <- logger.results.validation %>%
+  group_by(FAULT) %>%
+  summarise (Score = sum(PrFault))
 
-#Column bind the data into one variable
-trainingdata <- cbind(traininginput,trainingoutput)
-colnames(trainingdata) <- c("Input","Output")
+print(performance)
+print(paste("Score =",performance$Score[2]-performance$Score[1],"/",sum(logger.results$FAULT==TRUE)))
 
-#Train the neural network
-#Going to have 10 hidden layers
-#Threshold is a numeric value specifying the threshold for the partial
-#derivatives of the error function as stopping criteria.
-net.sqrt <- neuralnet(Output~Input,trainingdata, hidden=5, threshold=0.001)
-print(net.sqrt)
-
-#Plot the neural network
-plot(net.sqrt)
-
-#Test the neural network on some training data
-testdata <- as.data.frame((1:10)^2) #Generate some squared numbers
-net.results <- compute(net.sqrt, testdata) #Run them through the neural network
-
-#Lets see what properties net.sqrt has
-ls(net.results)
-
-#Lets see the results
-print(net.results$net.result)
-
-#Lets display a better version of the results
-cleanoutput <- cbind(testdata,sqrt(testdata),
-                     as.data.frame(net.results$net.result))
-colnames(cleanoutput) <- c("Input","Expected Output","Neural Net Output")
-print(cleanoutput)
+# Interrogate results
+StartTime <- force_tz(as.POSIXct("2015-03-17 09:11:00", format = "%Y-%m-%d %H:%M:%OS"),"UTC")
+EndTime <- force_tz(as.POSIXct("2015-03-17 15:13:00", format = "%Y-%m-%d %H:%M:%OS"),"UTC")
+logger.results.validation2 <- subset(logger.results.validation, logger.results.validation$TS >= StartTime & logger.results.validation$TS <= EndTime)
+plot(logger.results.validation2$TS,logger.results.validation2$RMSI1, type="l")
+polygon(logger.results.validation2$TS,logger.results.validation2$PrFault*max(logger.results.validation2$RMSI1), col =rgb(1,0,0,alpha=0.3),xlab="",ylab="",yaxt="n",border = NA)
+polygon(logger.results.validation2$TS,logger.results.validation2$FAULT*max(logger.results.validation2$RMSI1), col =rgb(0,0,1,alpha=0.3),xlab="",ylab="",yaxt="n",border = NA)
+axis(4)

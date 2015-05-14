@@ -1,0 +1,7 @@
+{
+    "installOptions" : {
+        "installDependencies" : true,
+        "installFromRepository" : true,
+        "libraryPath" : "\\\\domain.prd.int/Data/users/acousla1/My Documents/R/win-library/3.1"
+    }
+}
