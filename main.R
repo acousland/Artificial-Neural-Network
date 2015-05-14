@@ -11,10 +11,8 @@ require (nnet)         # Nerual Network Package
 require (RODBC)        # Load RODBC package
 require (lubridate)    # Required to manipulate dates
 require (dplyr)        # Required for performance measurement
-require (devtools)
-require (clusterGeneration)
 
-source_url('https://gist.githubusercontent.com/fawda123/7471137/raw/466c1474d0a505ff044412703516c34f1a4684a5/nnet_plot_update.r')
+source ("Threshold_Optimise.R")
 
 # Create a connection to the database called "RTV"
 odbcCloseAll()
@@ -38,26 +36,38 @@ StartTime <- as.POSIXct("2015-03-17 08:00:00", format = "%Y-%m-%d %H:%M:%OS", tz
 EndTime <- as.POSIXct("2015-03-17 15:00:00", format = "%Y-%m-%d %H:%M:%OS", tz = "UTC")
 logger.results.validation <- subset(logger.results, logger.results$TS >= StartTime & logger.results$TS <= EndTime)
 
-# Generate the neural network model
-NeuralModel = nnet(FAULT~RMSI1, data=logger.results.training,size=20,maxit=1000,decay=.001)
-#save(fault.network, file="test.rda")
-#load("test.rda")
+# Superimpose load current on fault current
+logger.results.training$RMSI1 <- (logger.results.training$RMSI1 + logger.results.training$RMSI2)
+logger.results.validation$RMSI1 <- (logger.results.validation$RMSI1 + logger.results.validation$RMSI2)
 
+# Train neural network
+NeuralModel = nnet(FAULT~RMSI1, data=logger.results.training,size=20,maxit=1000,decay=.001)
+
+# Make predictions based on neural network
 logger.results.validation$PrFault <- predict(NeuralModel,logger.results.validation) 
+
+# Optimise the trigger threshold
+results <- Threshold_Optimise(logger.results.validation,0,1,0.05)
+threshold <- results[which.max(results[,4]),1]
+
+# Perform thresholding as per otimum value
+#logger.results.validation$FtDetected <- ifelse(logger.results.validation$PrFault<threshold,0,1)
+logger.results.validation$FtDetected <- logger.results.validation$PrFault
 
 # Measure performance
 performance <- logger.results.validation %>%
   group_by(FAULT) %>%
-  summarise (Score = sum(PrFault))
-
+  summarise (Score = sum(FtDetected))
 print(performance)
 print(paste("Score =",performance$Score[2]-performance$Score[1],"/",sum(logger.results$FAULT==TRUE)))
 
 # Interrogate results
-StartTime <- force_tz(as.POSIXct("2015-03-17 09:11:00", format = "%Y-%m-%d %H:%M:%OS"),"UTC")
-EndTime <- force_tz(as.POSIXct("2015-03-17 15:13:00", format = "%Y-%m-%d %H:%M:%OS"),"UTC")
-logger.results.validation2 <- subset(logger.results.validation, logger.results.validation$TS >= StartTime & logger.results.validation$TS <= EndTime)
-plot(logger.results.validation2$TS,logger.results.validation2$RMSI1, type="l")
-polygon(logger.results.validation2$TS,logger.results.validation2$PrFault*max(logger.results.validation2$RMSI1), col =rgb(1,0,0,alpha=0.3),xlab="",ylab="",yaxt="n",border = NA)
-polygon(logger.results.validation2$TS,logger.results.validation2$FAULT*max(logger.results.validation2$RMSI1), col =rgb(0,0,1,alpha=0.3),xlab="",ylab="",yaxt="n",border = NA)
+StartTime <- force_tz(as.POSIXct("2015-03-17 13:18:00", format = "%Y-%m-%d %H:%M:%OS"),"UTC")
+EndTime <- force_tz(as.POSIXct("2015-03-17 13:19:00", format = "%Y-%m-%d %H:%M:%OS"),"UTC")
+logger.results.validation.subset <- subset(logger.results.validation, logger.results.validation$TS >= StartTime & logger.results.validation$TS <= EndTime)
+
+plot(logger.results.validation.subset$TS,logger.results.validation.subset$RMSI1, type="l")
+#plot(logger.results.validation.subset$TS,logger.results.validation.subset$FtDetected*max(logger.results.validation.subset$RMSI1))
+polygon(logger.results.validation.subset$TS,logger.results.validation.subset$FtDetected*max(logger.results.validation.subset$RMSI1), col =rgb(1,0,0,alpha=0.3),xlab="",ylab="",yaxt="n",border = NA)
+#polygon(logger.results.validation.subset$TS,logger.results.validation.subset$FAULT*max(logger.results.validation.subset$RMSI1), col =rgb(0,0,1,alpha=0.3),xlab="",ylab="",yaxt="n",border = NA)
 axis(4)
