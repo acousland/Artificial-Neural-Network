@@ -13,7 +13,7 @@ require (lubridate)    # Required to manipulate dates
 require (dplyr)        # Required for performance measurement
 
 source ("Threshold_Optimise.R")
-source("Network_Optimise.R")
+source ("Network_Optimise.R")
 
 # Create a connection to the database called "RTV"
 odbcCloseAll()
@@ -43,9 +43,9 @@ EndTime <- as.POSIXct("2015-03-17 15:00:00", format = "%Y-%m-%d %H:%M:%OS", tz =
 logger.results.testing <- subset(logger.results, logger.results$TS >= StartTime & logger.results$TS <= EndTime)
 
 # Superimpose load current on fault current
-#logger.results.training$RMSI1 <- (logger.results.training$RMSI1 + logger.results.training$RMSI2)
-#logger.results.validation$RMSI1 <- (logger.results.validation$RMSI1 + logger.results.validation$RMSI2)
-#logger.results.testing$RMSI1 <- (logger.results.testing$RMSI1 + logger.results.testing$RMSI2)
+logger.results.training$RMSI1 <- (logger.results.training$RMSI1 + logger.results.training$RMSI2)
+logger.results.validation$RMSI1 <- (logger.results.validation$RMSI1 + logger.results.validation$RMSI2)
+logger.results.testing$RMSI1 <- (logger.results.testing$RMSI1 + logger.results.testing$RMSI2)
 
 model.size=10
 max.iterations=1000
