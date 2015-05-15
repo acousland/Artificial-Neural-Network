@@ -38,15 +38,18 @@ logger.results.training.backup <- logger.results.training
 logger.results.validation.backup <- logger.results.validation
 
 # Set NN model parameters
-model.size <- 20
+model.size <- 10
 decay.threshold <- 0.001
 max.iterations <- 1000
 
-for (i is 20)
+for (i in 1:100)
 {
+  logger.results.training <- logger.results.training.backup
+  logger.results.validation <- logger.results.validation.backup
+
   # Superimpose load current on fault current
-  #logger.results.training$RMSI1 <- (logger.results.training$RMSI1 + logger.results.training$RMSI2)
-  #logger.results.validation$RMSI1 <- (logger.results.validation$RMSI1 + logger.results.validation$RMSI2)
+  # logger.results.training$RMSI1 <- (logger.results.training$RMSI1 + logger.results.training$RMSI2)
+  # logger.results.validation$RMSI1 <- (logger.results.validation$RMSI1 + logger.results.validation$RMSI2)
   
   # Train neural network
   NeuralModel = nnet(FAULT~RMSI1, data=logger.results.training,size=model.size,maxit=max.iterations,decay=decay.threshold)

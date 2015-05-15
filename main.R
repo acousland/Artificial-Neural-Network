@@ -36,30 +36,47 @@ StartTime <- as.POSIXct("2015-03-17 08:00:00", format = "%Y-%m-%d %H:%M:%OS", tz
 EndTime <- as.POSIXct("2015-03-17 15:00:00", format = "%Y-%m-%d %H:%M:%OS", tz = "UTC")
 logger.results.validation <- subset(logger.results, logger.results$TS >= StartTime & logger.results$TS <= EndTime)
 
+# Create Testing Dataset
+StartTime <- as.POSIXct("2015-03-17 08:00:00", format = "%Y-%m-%d %H:%M:%OS", tz = "UTC")
+EndTime <- as.POSIXct("2015-03-17 15:00:00", format = "%Y-%m-%d %H:%M:%OS", tz = "UTC")
+logger.results.testing <- subset(logger.results, logger.results$TS >= StartTime & logger.results$TS <= EndTime)
+
 # Superimpose load current on fault current
-#logger.results.training$RMSI1 <- (logger.results.training$RMSI1 + logger.results.training$RMSI2)
-#logger.results.validation$RMSI1 <- (logger.results.validation$RMSI1 + logger.results.validation$RMSI2)
+logger.results.training$RMSI1 <- (logger.results.training$RMSI1 + logger.results.training$RMSI2)
+logger.results.validation$RMSI1 <- (logger.results.validation$RMSI1 + logger.results.validation$RMSI2)
+logger.results.testing$RMSI1 <- (logger.results.testing$RMSI1 + logger.results.testing$RMSI2)
 
-# Train neural network
-NeuralModel = nnet(FAULT~RMSI1, data=logger.results.training,size=20,maxit=1000,decay=.001)
+source("Network_Optimise.R")
 
-# Make predictions based on neural network
-logger.results.validation$PrFault <- predict(NeuralModel,logger.results.validation) 
+model.size=5
+max.iterations=1000
+decay.threshold=0.001
+model.instances=10
+
+Network_Details <- Network_Optimise(logger.results.training
+                 ,logger.results.validation
+                 ,"FAULT~RMSI1"
+                 ,model.size
+                 ,max.iterations
+                 ,decay.threshold
+                 ,model.instances)
+
+logger.results.testing$PrFault <- predict(Network_Details,logger.results.testing)
 
 # Optimise the trigger threshold
-results <- Threshold_Optimise(logger.results.validation,0,1,0.05)
+results <- Threshold_Optimise(logger.results.testing,0,1,0.05)
 threshold <- results[which.max(results[,4]),1]
+rm(results)
 
 # Perform thresholding as per otimum value
-logger.results.validation$FtDetected <- ifelse(logger.results.validation$PrFault<threshold,0,1)
-#logger.results.validation$FtDetected <- logger.results.validation$PrFault
+logger.results.testing$FtDetected <- ifelse(logger.results.testing$PrFault<threshold,0,1)
 
 # Measure performance
-performance <- logger.results.validation %>%
+performance <- logger.results.testing %>%
   group_by(FAULT) %>%
   summarise (Score = sum(FtDetected))
-print(performance)
-print(paste("Score =",performance$Score[2]-performance$Score[1],"/",sum(logger.results$FAULT==TRUE)))
+
+print(performance$Score[2]-performance$Score[1])
 
 # Interrogate results
 StartTime <- force_tz(as.POSIXct("2015-03-17 13:18:00", format = "%Y-%m-%d %H:%M:%OS"),"UTC")

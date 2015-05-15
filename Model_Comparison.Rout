@@ -1,0 +1,2791 @@
+
+R version 3.1.3 (2015-03-09) -- "Smooth Sidewalk"
+Copyright (C) 2015 The R Foundation for Statistical Computing
+Platform: x86_64-redhat-linux-gnu (64-bit)
+
+R is free software and comes with ABSOLUTELY NO WARRANTY.
+You are welcome to redistribute it under certain conditions.
+Type 'license()' or 'licence()' for distribution details.
+
+  Natural language support but running in an English locale
+
+R is a collaborative project with many contributors.
+Type 'contributors()' for more information and
+'citation()' on how to cite R or R packages in publications.
+
+Type 'demo()' for some demos, 'help()' for on-line help, or
+'help.start()' for an HTML browser interface to help.
+Type 'q()' to quit R.
+
+[Previously saved workspace restored]
+
+> #########################################################
+> # Artificial Neural Network - Model Comparison 
+> # 
+> # - Aaron Cousland 15/05/2015
+> ########################################################
+> 
+> require (nnet)         # Nerual Network Package
+Loading required package: nnet
+> require (RODBC)        # Load RODBC package
+Loading required package: RODBC
+> require (lubridate)    # Required to manipulate dates
+Loading required package: lubridate
+> require (dplyr)        # Required for performance measurement
+Loading required package: dplyr
+
+Attaching package: ‘dplyr’
+
+The following objects are masked from ‘package:lubridate’:
+
+    intersect, setdiff, union
+
+The following object is masked from ‘package:stats’:
+
+    filter
+
+The following objects are masked from ‘package:base’:
+
+    intersect, setdiff, setequal, union
+
+> 
+> source ("Threshold_Optimise.R")
+> 
+> # Create a connection to the database called "RTV"
+> odbcCloseAll()
+> local.connection <- odbcConnect("RTV", believeNRows=FALSE)
+> 
+> # Query the database and put the results into the data frame logging.results
+> logger.results <- sqlQuery(local.connection,"SELECT * FROM ELSPEC.RMS_TRAINING where ts between '17/Mar/15 08:00:00 AM' and '17/Mar/15 03:00:00 PM';")
+> odbcCloseAll()
+> 
+> # Order by timestamp and force local timestamp
+> logger.results <- logger.results[with(logger.results, order(logger.results$TS)),]
+> logger.results$TS <- force_tz(logger.results$TS,"UTC")
+> 
+> # Create Training Dataset
+> StartTime <- as.POSIXct("2015-03-17 09:00:00", format = "%Y-%m-%d %H:%M:%OS", tz = "UTC")
+> EndTime <- as.POSIXct("2015-03-17 11:00:00", format = "%Y-%m-%d %H:%M:%OS", tz = "UTC")
+> logger.results.training <- subset(logger.results, logger.results$TS >= StartTime & logger.results$TS <= EndTime)
+> 
+> # Create Validation Dataset
+> StartTime <- as.POSIXct("2015-03-17 08:00:00", format = "%Y-%m-%d %H:%M:%OS", tz = "UTC")
+> EndTime <- as.POSIXct("2015-03-17 15:00:00", format = "%Y-%m-%d %H:%M:%OS", tz = "UTC")
+> logger.results.validation <- subset(logger.results, logger.results$TS >= StartTime & logger.results$TS <= EndTime)
+> 
+> # Create backup of datasets
+> logger.results.training.backup <- logger.results.training
+> logger.results.validation.backup <- logger.results.validation
+> 
+> # Set NN model parameters
+> model.size <- 10
+> decay.threshold <- 0.001
+> max.iterations <- 1000
+> 
+> for (i in 1:100)
++ {
++   logger.results.training <- logger.results.training.backup
++   logger.results.validation <- logger.results.validation.backup
++ 
++   # Superimpose load current on fault current
++   # logger.results.training$RMSI1 <- (logger.results.training$RMSI1 + logger.results.training$RMSI2)
++   # logger.results.validation$RMSI1 <- (logger.results.validation$RMSI1 + logger.results.validation$RMSI2)
++   
++   # Train neural network
++   NeuralModel = nnet(FAULT~RMSI1, data=logger.results.training,size=model.size,maxit=max.iterations,decay=decay.threshold)
++   
++   # Make predictions based on neural network
++   logger.results.validation$PrFault <- predict(NeuralModel,logger.results.validation) 
++   
++   # Optimise the trigger threshold
++   results <- Threshold_Optimise(logger.results.validation,0,1,0.05)
++   threshold <- results[which.max(results[,4]),1]
++   
++   # Perform thresholding as per otimum value
++   logger.results.validation$FtDetected <- ifelse(logger.results.validation$PrFault<threshold,0,1)
++   #logger.results.validation$FtDetected <- logger.results.validation$PrFault
++   
++   # Measure performance
++   performance <- logger.results.validation %>%
++     group_by(FAULT) %>%
++     summarise (Score = sum(FtDetected))
++   print(paste("Score =",performance$Score[2]-performance$Score[1],"/",sum(logger.results$FAULT==TRUE)))
++   
++   # Write to results table
++   write.table(t(c(model.size,decay.threshold,max.iterations,performance$Score,performance$Score[2]-performance$Score[1])),file="Model_Comparison_Results.csv", sep=",",append=T, row.names=F, col.names = F)
++ }
+# weights:  31
+initial  value 14139.445409 
+iter  10 value 770.183073
+iter  20 value 187.429577
+iter  30 value 180.538303
+iter  40 value 175.067308
+iter  50 value 174.819101
+iter  60 value 174.789371
+iter  70 value 174.768162
+iter  80 value 174.759798
+iter  90 value 174.682231
+iter 100 value 174.674991
+iter 110 value 174.672314
+iter 120 value 174.671848
+iter 130 value 174.670764
+final  value 174.670559 
+converged
+[1] "Score = 596 / 3271"
+# weights:  31
+initial  value 12271.152948 
+iter  10 value 769.502565
+iter  20 value 185.178487
+iter  30 value 169.196701
+iter  40 value 166.219040
+iter  50 value 164.983336
+iter  60 value 163.706178
+iter  70 value 163.384315
+iter  80 value 163.248617
+iter  90 value 163.223003
+iter 100 value 163.158093
+iter 110 value 163.135178
+iter 120 value 163.127698
+iter 130 value 163.124687
+iter 140 value 163.122979
+iter 150 value 163.122236
+iter 160 value 163.121870
+iter 170 value 163.121617
+iter 180 value 163.121255
+iter 190 value 163.120915
+iter 200 value 163.120832
+final  value 163.120740 
+converged
+[1] "Score = 914 / 3271"
+# weights:  31
+initial  value 8995.874802 
+iter  10 value 788.645579
+iter  20 value 772.540212
+iter  30 value 772.300577
+iter  40 value 772.142126
+iter  50 value 769.250220
+iter  60 value 488.740582
+iter  70 value 180.922826
+iter  80 value 175.804273
+iter  90 value 175.028053
+iter 100 value 174.137043
+iter 110 value 166.064134
+iter 120 value 165.158938
+iter 130 value 163.781686
+iter 140 value 163.490596
+iter 150 value 163.383974
+iter 160 value 163.281501
+iter 170 value 163.240300
+iter 180 value 163.201159
+iter 190 value 163.173739
+iter 200 value 163.166037
+iter 210 value 163.162885
+iter 220 value 163.160663
+iter 230 value 163.159901
+iter 240 value 163.158924
+iter 250 value 163.158335
+iter 260 value 163.157928
+iter 270 value 163.157335
+iter 280 value 163.156378
+iter 290 value 163.156039
+final  value 163.156031 
+converged
+[1] "Score = 906 / 3271"
+# weights:  31
+initial  value 10073.189665 
+iter  10 value 588.118340
+iter  20 value 177.250754
+iter  30 value 166.844118
+iter  40 value 165.381952
+iter  50 value 164.215842
+iter  60 value 163.765516
+iter  70 value 163.567778
+iter  80 value 163.434778
+iter  90 value 163.289816
+iter 100 value 163.197714
+iter 110 value 163.151585
+iter 120 value 163.141442
+iter 130 value 163.129975
+iter 140 value 163.127768
+iter 150 value 163.122988
+iter 160 value 163.122300
+iter 170 value 163.122017
+iter 180 value 163.121705
+iter 190 value 163.121342
+final  value 163.121115 
+converged
+[1] "Score = 914 / 3271"
+# weights:  31
+initial  value 7079.951198 
+iter  10 value 176.970699
+iter  20 value 169.471488
+iter  30 value 167.543714
+iter  40 value 165.849826
+iter  50 value 164.152160
+iter  60 value 163.616984
+iter  70 value 163.276979
+iter  80 value 163.206166
+iter  90 value 163.161374
+iter 100 value 163.142999
+iter 110 value 163.133116
+iter 120 value 163.129475
+iter 130 value 163.128201
+iter 140 value 163.127606
+iter 150 value 163.127194
+iter 160 value 163.127083
+iter 170 value 163.127016
+final  value 163.126965 
+converged
+[1] "Score = 908 / 3271"
+# weights:  31
+initial  value 21980.350808 
+iter  10 value 878.118680
+iter  20 value 780.437230
+iter  30 value 200.217236
+iter  40 value 186.139786
+iter  50 value 175.433098
+iter  60 value 169.961141
+iter  70 value 166.353541
+iter  80 value 163.940642
+iter  90 value 163.294182
+iter 100 value 163.215201
+iter 110 value 163.170807
+iter 120 value 163.155785
+iter 130 value 163.142383
+iter 140 value 163.135750
+iter 150 value 163.131058
+iter 160 value 163.129696
+iter 170 value 163.128844
+final  value 163.128554 
+converged
+[1] "Score = 907 / 3271"
+# weights:  31
+initial  value 4873.805109 
+iter  10 value 780.453409
+iter  20 value 772.104756
+iter  30 value 184.350933
+iter  40 value 176.213293
+iter  50 value 175.030153
+iter  60 value 174.887361
+iter  70 value 174.777794
+iter  80 value 174.712373
+iter  90 value 174.694290
+iter 100 value 174.690631
+iter 110 value 174.689388
+final  value 174.689296 
+converged
+[1] "Score = 1364 / 3271"
+# weights:  31
+initial  value 12863.911922 
+iter  10 value 205.163704
+iter  20 value 172.689789
+iter  30 value 168.183825
+iter  40 value 166.976683
+iter  50 value 165.982896
+iter  60 value 165.297374
+iter  70 value 164.265518
+iter  80 value 163.473842
+iter  90 value 163.294748
+iter 100 value 163.187341
+iter 110 value 163.149908
+iter 120 value 163.130640
+iter 130 value 163.128326
+iter 140 value 163.125435
+iter 150 value 163.123600
+iter 160 value 163.122192
+iter 170 value 163.121767
+iter 180 value 163.121463
+iter 190 value 163.121297
+iter 200 value 163.121246
+final  value 163.121116 
+converged
+[1] "Score = 913 / 3271"
+# weights:  31
+initial  value 7329.494502 
+iter  10 value 182.771256
+iter  20 value 166.489828
+iter  30 value 165.380793
+iter  40 value 164.354858
+iter  50 value 163.556147
+iter  60 value 163.444818
+iter  70 value 163.372566
+iter  80 value 163.215778
+iter  90 value 163.153505
+iter 100 value 163.131736
+iter 110 value 163.127546
+iter 120 value 163.124337
+final  value 163.122843 
+converged
+[1] "Score = 903 / 3271"
+# weights:  31
+initial  value 3121.834330 
+iter  10 value 775.404422
+iter  20 value 771.899169
+iter  30 value 269.504034
+iter  40 value 184.599612
+iter  50 value 172.975047
+iter  60 value 166.916853
+iter  70 value 165.002425
+iter  80 value 164.181384
+iter  90 value 163.865121
+iter 100 value 163.515766
+iter 110 value 163.375057
+iter 120 value 163.275394
+iter 130 value 163.236285
+iter 140 value 163.204082
+iter 150 value 163.187809
+iter 160 value 163.179688
+iter 170 value 163.170327
+iter 180 value 163.151937
+iter 190 value 163.137552
+iter 200 value 163.127919
+iter 210 value 163.123852
+iter 220 value 163.123056
+iter 230 value 163.122281
+iter 240 value 163.121859
+iter 250 value 163.121371
+final  value 163.121307 
+converged
+[1] "Score = 912 / 3271"
+# weights:  31
+initial  value 4344.146147 
+iter  10 value 780.627009
+iter  20 value 772.792417
+iter  30 value 633.896979
+iter  40 value 179.781549
+iter  50 value 168.708729
+iter  60 value 166.679324
+iter  70 value 165.327051
+iter  80 value 164.742775
+iter  90 value 163.578526
+iter 100 value 163.347395
+iter 110 value 163.205154
+iter 120 value 163.154572
+iter 130 value 163.137765
+iter 140 value 163.127555
+iter 150 value 163.124020
+iter 160 value 163.122181
+final  value 163.121625 
+converged
+[1] "Score = 914 / 3271"
+# weights:  31
+initial  value 8039.063669 
+iter  10 value 183.364952
+iter  20 value 176.260813
+iter  30 value 175.569586
+iter  40 value 174.940527
+iter  50 value 174.781839
+iter  60 value 174.741178
+iter  70 value 174.727116
+iter  80 value 174.711138
+iter  90 value 174.703309
+iter 100 value 174.699255
+iter 110 value 174.698079
+iter 120 value 174.697626
+iter 130 value 174.697307
+iter 140 value 174.696828
+iter 150 value 174.696576
+iter 160 value 174.696440
+iter 170 value 174.696202
+iter 180 value 174.695599
+iter 190 value 174.694289
+iter 200 value 174.693643
+iter 210 value 174.686743
+iter 220 value 174.682640
+iter 230 value 174.677143
+iter 240 value 174.674808
+iter 250 value 174.672971
+iter 260 value 174.671163
+iter 270 value 174.669094
+iter 280 value 174.668248
+iter 290 value 174.668122
+iter 300 value 174.667760
+final  value 174.667376 
+converged
+[1] "Score = 2155 / 3271"
+# weights:  31
+initial  value 1911.379395 
+iter  10 value 800.754287
+iter  20 value 770.418176
+iter  30 value 770.116562
+iter  40 value 770.109085
+iter  50 value 770.098602
+iter  60 value 770.068208
+iter  70 value 676.715731
+iter  80 value 184.969394
+iter  90 value 182.687710
+iter 100 value 178.920172
+iter 110 value 175.737256
+iter 120 value 173.507206
+iter 130 value 166.471011
+iter 140 value 164.999550
+iter 150 value 163.762268
+iter 160 value 163.382258
+iter 170 value 163.315681
+iter 180 value 163.220749
+iter 190 value 163.197399
+iter 200 value 163.152952
+iter 210 value 163.139317
+iter 220 value 163.134085
+iter 230 value 163.130764
+iter 240 value 163.129635
+iter 250 value 163.128774
+iter 260 value 163.127801
+iter 270 value 163.127377
+iter 280 value 163.127202
+iter 290 value 163.127061
+iter 300 value 163.126985
+final  value 163.126916 
+converged
+[1] "Score = 908 / 3271"
+# weights:  31
+initial  value 5894.284935 
+iter  10 value 695.589686
+iter  20 value 186.764294
+iter  30 value 177.677574
+iter  40 value 175.748991
+iter  50 value 174.881891
+iter  60 value 174.463756
+iter  70 value 169.020868
+iter  80 value 165.843943
+iter  90 value 165.540182
+iter 100 value 165.045345
+iter 110 value 163.581822
+iter 120 value 163.402616
+iter 130 value 163.330726
+iter 140 value 163.265787
+iter 150 value 163.205642
+iter 160 value 163.191861
+iter 170 value 163.182679
+iter 180 value 163.179468
+iter 190 value 163.174098
+iter 200 value 163.169212
+iter 210 value 163.163661
+iter 220 value 163.159812
+iter 230 value 163.153293
+iter 240 value 163.152119
+iter 250 value 163.151344
+final  value 163.151321 
+converged
+[1] "Score = 906 / 3271"
+# weights:  31
+initial  value 21095.402094 
+iter  10 value 675.424862
+iter  20 value 194.119404
+iter  30 value 189.153757
+iter  40 value 176.878016
+iter  50 value 171.735597
+iter  60 value 168.502457
+iter  70 value 164.268080
+iter  80 value 163.924600
+iter  90 value 163.617266
+iter 100 value 163.358930
+iter 110 value 163.245122
+iter 120 value 163.181742
+iter 130 value 163.149167
+iter 140 value 163.130767
+iter 150 value 163.128796
+iter 160 value 163.124925
+iter 170 value 163.123405
+iter 180 value 163.122776
+iter 190 value 163.122314
+iter 200 value 163.121969
+final  value 163.121576 
+converged
+[1] "Score = 914 / 3271"
+# weights:  31
+initial  value 2996.782138 
+iter  10 value 776.347802
+iter  20 value 772.999195
+iter  30 value 172.587715
+iter  40 value 167.402904
+iter  50 value 166.305787
+iter  60 value 165.562017
+iter  70 value 165.330734
+iter  80 value 163.686591
+iter  90 value 163.392744
+iter 100 value 163.235084
+iter 110 value 163.177864
+iter 120 value 163.151364
+iter 130 value 163.137209
+iter 140 value 163.129906
+final  value 163.127308 
+converged
+[1] "Score = 906 / 3271"
+# weights:  31
+initial  value 15450.367778 
+iter  10 value 196.971318
+iter  20 value 182.833565
+iter  30 value 174.906930
+iter  40 value 174.765092
+iter  50 value 174.712135
+iter  60 value 167.609587
+iter  70 value 164.757803
+iter  80 value 163.608343
+iter  90 value 163.256398
+iter 100 value 163.189909
+iter 110 value 163.156254
+iter 120 value 163.151176
+iter 130 value 163.138657
+iter 140 value 163.130615
+iter 150 value 163.129362
+iter 160 value 163.128987
+iter 170 value 163.128820
+final  value 163.128521 
+converged
+[1] "Score = 907 / 3271"
+# weights:  31
+initial  value 10909.014344 
+iter  10 value 797.654997
+iter  20 value 768.774539
+iter  30 value 204.987694
+iter  40 value 173.804760
+iter  50 value 168.431282
+iter  60 value 167.220588
+iter  70 value 166.022229
+iter  80 value 163.912229
+iter  90 value 163.728372
+iter 100 value 163.422291
+iter 110 value 163.241444
+iter 120 value 163.210506
+iter 130 value 163.179331
+iter 140 value 163.171119
+iter 150 value 163.166350
+iter 160 value 163.163649
+iter 170 value 163.158210
+iter 180 value 163.157330
+iter 190 value 163.156577
+iter 200 value 163.156253
+iter 210 value 163.155915
+final  value 163.155892 
+converged
+[1] "Score = 904 / 3271"
+# weights:  31
+initial  value 13617.198825 
+iter  10 value 176.858339
+iter  20 value 176.039857
+iter  30 value 175.007322
+iter  40 value 174.838392
+iter  50 value 174.781130
+iter  60 value 174.725752
+iter  70 value 174.717835
+iter  80 value 174.710296
+iter  90 value 174.701409
+iter 100 value 174.700283
+iter 110 value 174.699786
+iter 120 value 174.698669
+iter 130 value 174.698327
+iter 140 value 174.697259
+iter 150 value 174.696922
+iter 160 value 174.696257
+iter 170 value 174.694923
+iter 180 value 174.692800
+iter 190 value 174.689945
+iter 200 value 174.680707
+iter 210 value 174.676058
+iter 220 value 174.674180
+iter 230 value 174.673470
+iter 240 value 174.671669
+iter 250 value 174.671085
+iter 260 value 174.670892
+iter 260 value 174.670891
+final  value 174.670891 
+converged
+[1] "Score = 518 / 3271"
+# weights:  31
+initial  value 15954.138764 
+iter  10 value 772.391906
+iter  20 value 770.230664
+iter  30 value 342.329979
+iter  40 value 188.956613
+iter  50 value 177.054938
+iter  60 value 175.244948
+iter  70 value 174.929811
+iter  80 value 174.833519
+iter  90 value 174.807747
+iter 100 value 174.777153
+iter 110 value 174.751936
+iter 120 value 174.736064
+iter 130 value 174.718867
+iter 140 value 174.706887
+iter 150 value 174.702479
+iter 160 value 174.698185
+iter 170 value 174.696156
+iter 180 value 174.694950
+iter 190 value 174.693867
+iter 200 value 174.689828
+iter 210 value 174.680329
+iter 220 value 174.677920
+iter 230 value 174.674850
+iter 240 value 174.672698
+iter 250 value 174.670669
+iter 260 value 174.669204
+iter 270 value 174.599549
+iter 280 value 168.498341
+iter 290 value 165.657537
+iter 300 value 165.222148
+iter 310 value 164.377647
+iter 320 value 163.506640
+iter 330 value 163.290707
+iter 340 value 163.237572
+iter 350 value 163.186335
+iter 360 value 163.147535
+iter 370 value 163.132782
+iter 380 value 163.127978
+iter 390 value 163.124848
+iter 400 value 163.123665
+final  value 163.123583 
+converged
+[1] "Score = 915 / 3271"
+# weights:  31
+initial  value 7547.320140 
+iter  10 value 199.293486
+iter  20 value 183.316401
+iter  30 value 175.711001
+iter  40 value 172.993490
+iter  50 value 166.096775
+iter  60 value 165.010566
+iter  70 value 164.287387
+iter  80 value 163.756191
+iter  90 value 163.355055
+iter 100 value 163.270826
+iter 110 value 163.178213
+iter 120 value 163.150655
+iter 130 value 163.128394
+iter 140 value 163.123738
+iter 150 value 163.122621
+iter 160 value 163.122115
+iter 170 value 163.121787
+final  value 163.121697 
+converged
+[1] "Score = 914 / 3271"
+# weights:  31
+initial  value 6758.702955 
+iter  10 value 771.953107
+iter  20 value 177.016480
+iter  30 value 169.024275
+iter  40 value 166.785221
+iter  50 value 166.143808
+iter  60 value 164.992441
+iter  70 value 163.984803
+iter  80 value 163.790174
+iter  90 value 163.491742
+iter 100 value 163.255918
+iter 110 value 163.183236
+iter 120 value 163.160368
+iter 130 value 163.139389
+iter 140 value 163.132416
+iter 150 value 163.130232
+iter 160 value 163.124521
+iter 170 value 163.123069
+iter 180 value 163.121894
+iter 190 value 163.121214
+iter 200 value 163.121014
+final  value 163.120983 
+converged
+[1] "Score = 913 / 3271"
+# weights:  31
+initial  value 12102.191890 
+iter  10 value 180.442836
+iter  20 value 176.619544
+iter  30 value 175.710693
+iter  40 value 174.947715
+iter  50 value 174.802821
+iter  60 value 174.731045
+iter  70 value 174.703402
+iter  80 value 174.692009
+iter  90 value 174.689643
+iter 100 value 174.689200
+iter 110 value 174.688888
+iter 120 value 174.687614
+iter 130 value 174.680718
+iter 140 value 174.675595
+iter 150 value 174.674331
+iter 160 value 174.673417
+iter 170 value 174.672932
+iter 180 value 174.672464
+iter 190 value 174.671133
+iter 200 value 174.670509
+iter 210 value 174.670325
+final  value 174.670210 
+converged
+[1] "Score = 612 / 3271"
+# weights:  31
+initial  value 12900.760134 
+iter  10 value 772.755245
+iter  20 value 771.756550
+iter  30 value 226.244643
+iter  40 value 175.685247
+iter  50 value 166.488022
+iter  60 value 166.045737
+iter  70 value 165.084827
+iter  80 value 164.113852
+iter  90 value 163.532109
+iter 100 value 163.461051
+iter 110 value 163.294246
+iter 120 value 163.242738
+iter 130 value 163.222692
+iter 140 value 163.197850
+iter 150 value 163.171016
+iter 160 value 163.157604
+iter 170 value 163.155268
+iter 180 value 163.152675
+iter 190 value 163.151361
+iter 200 value 163.150909
+final  value 163.150764 
+converged
+[1] "Score = 903 / 3271"
+# weights:  31
+initial  value 23981.551520 
+iter  10 value 1265.504209
+iter  20 value 775.775388
+iter  30 value 770.155632
+iter  40 value 770.143122
+iter  50 value 770.114774
+iter  60 value 763.569606
+iter  70 value 193.915168
+iter  80 value 180.089364
+iter  90 value 171.053419
+iter 100 value 166.930531
+iter 110 value 165.501495
+iter 120 value 164.068094
+iter 130 value 163.702351
+iter 140 value 163.246162
+iter 150 value 163.188686
+iter 160 value 163.153225
+iter 170 value 163.140855
+iter 180 value 163.128001
+iter 190 value 163.123053
+iter 200 value 163.121921
+iter 210 value 163.121167
+iter 220 value 163.120927
+iter 220 value 163.120926
+iter 220 value 163.120926
+final  value 163.120926 
+converged
+[1] "Score = 913 / 3271"
+# weights:  31
+initial  value 3000.032345 
+iter  10 value 179.382973
+iter  20 value 168.987233
+iter  30 value 166.936342
+iter  40 value 165.563950
+iter  50 value 165.343411
+iter  60 value 164.999247
+iter  70 value 164.065793
+iter  80 value 163.661013
+iter  90 value 163.500864
+iter 100 value 163.385512
+iter 110 value 163.297072
+iter 120 value 163.266945
+iter 130 value 163.244087
+iter 140 value 163.227288
+iter 150 value 163.202727
+iter 160 value 163.162595
+iter 170 value 163.155778
+iter 180 value 163.152005
+iter 190 value 163.151196
+final  value 163.150730 
+converged
+[1] "Score = 903 / 3271"
+# weights:  31
+initial  value 8810.516324 
+iter  10 value 181.623582
+iter  20 value 170.875206
+iter  30 value 167.629323
+iter  40 value 166.211573
+iter  50 value 165.731187
+iter  60 value 164.548477
+iter  70 value 163.770052
+iter  80 value 163.550865
+iter  90 value 163.397540
+iter 100 value 163.269266
+iter 110 value 163.229899
+iter 120 value 163.212779
+iter 130 value 163.191159
+iter 140 value 163.182490
+iter 150 value 163.168374
+iter 160 value 163.150842
+iter 170 value 163.141808
+iter 180 value 163.134312
+iter 190 value 163.132063
+iter 200 value 163.130236
+iter 210 value 163.129198
+iter 220 value 163.128368
+iter 230 value 163.127843
+iter 240 value 163.127404
+final  value 163.127090 
+converged
+[1] "Score = 908 / 3271"
+# weights:  31
+initial  value 10299.878930 
+iter  10 value 187.163998
+iter  20 value 177.072070
+iter  30 value 170.464102
+iter  40 value 165.829832
+iter  50 value 164.724623
+iter  60 value 164.026158
+iter  70 value 163.681674
+iter  80 value 163.528267
+iter  90 value 163.420294
+iter 100 value 163.356492
+iter 110 value 163.308872
+iter 120 value 163.275961
+iter 130 value 163.251299
+iter 140 value 163.238633
+iter 150 value 163.234336
+iter 150 value 163.234335
+final  value 163.234335 
+converged
+[1] "Score = 903 / 3271"
+# weights:  31
+initial  value 10494.911837 
+iter  10 value 186.913457
+iter  20 value 168.324017
+iter  30 value 166.119957
+iter  40 value 164.905830
+iter  50 value 164.010900
+iter  60 value 163.598409
+iter  70 value 163.341643
+iter  80 value 163.232734
+iter  90 value 163.213028
+iter 100 value 163.196544
+iter 110 value 163.181840
+iter 120 value 163.168501
+iter 130 value 163.164487
+iter 140 value 163.162853
+iter 150 value 163.161998
+iter 160 value 163.160514
+iter 170 value 163.154823
+iter 180 value 163.152105
+iter 190 value 163.151784
+iter 200 value 163.151551
+final  value 163.151463 
+converged
+[1] "Score = 903 / 3271"
+# weights:  31
+initial  value 17852.063411 
+iter  10 value 181.317192
+iter  20 value 170.667663
+iter  30 value 167.756779
+iter  40 value 165.889982
+iter  50 value 164.479837
+iter  60 value 164.018320
+iter  70 value 163.565808
+iter  80 value 163.306927
+iter  90 value 163.201214
+iter 100 value 163.173656
+iter 110 value 163.141726
+iter 120 value 163.136944
+iter 130 value 163.134973
+iter 140 value 163.131780
+iter 150 value 163.129967
+iter 160 value 163.127299
+iter 170 value 163.126350
+iter 180 value 163.125610
+final  value 163.125601 
+converged
+[1] "Score = 906 / 3271"
+# weights:  31
+initial  value 5233.804440 
+iter  10 value 191.019818
+iter  20 value 170.950767
+iter  30 value 167.501467
+iter  40 value 164.874941
+iter  50 value 163.853582
+iter  60 value 163.560331
+iter  70 value 163.329910
+iter  80 value 163.244929
+iter  90 value 163.193236
+iter 100 value 163.167185
+iter 110 value 163.161944
+iter 120 value 163.159142
+iter 130 value 163.158439
+iter 140 value 163.158042
+iter 150 value 163.157706
+iter 160 value 163.157315
+iter 170 value 163.156976
+iter 180 value 163.156151
+iter 190 value 163.155807
+iter 200 value 163.155599
+final  value 163.155597 
+converged
+[1] "Score = 904 / 3271"
+# weights:  31
+initial  value 8529.078669 
+iter  10 value 248.505994
+iter  20 value 176.465200
+iter  30 value 175.169803
+iter  40 value 174.729203
+iter  50 value 174.707952
+iter  60 value 174.699971
+iter  70 value 174.695261
+iter  80 value 174.692237
+iter  90 value 174.689949
+iter 100 value 174.689189
+iter 110 value 174.687624
+iter 120 value 174.685071
+iter 130 value 174.683573
+iter 140 value 174.680469
+iter 150 value 174.676483
+iter 160 value 174.674089
+iter 170 value 174.672090
+iter 180 value 174.671164
+iter 190 value 174.669914
+iter 200 value 174.669221
+final  value 174.668166 
+converged
+[1] "Score = 402 / 3271"
+# weights:  31
+initial  value 12645.749933 
+iter  10 value 194.850097
+iter  20 value 169.479222
+iter  30 value 167.486807
+iter  40 value 165.842671
+iter  50 value 164.469789
+iter  60 value 163.859392
+iter  70 value 163.611731
+iter  80 value 163.440254
+iter  90 value 163.220669
+iter 100 value 163.159965
+iter 110 value 163.135439
+iter 120 value 163.126999
+iter 130 value 163.124983
+iter 140 value 163.124062
+iter 150 value 163.122204
+iter 160 value 163.121641
+iter 170 value 163.121292
+iter 180 value 163.121160
+final  value 163.120989 
+converged
+[1] "Score = 914 / 3271"
+# weights:  31
+initial  value 3931.078548 
+iter  10 value 778.694094
+iter  20 value 772.885083
+iter  30 value 693.758264
+iter  40 value 220.344471
+iter  50 value 175.905419
+iter  60 value 170.756679
+iter  70 value 167.419407
+iter  80 value 165.781574
+iter  90 value 164.171398
+iter 100 value 163.578894
+iter 110 value 163.241641
+iter 120 value 163.177732
+iter 130 value 163.157942
+iter 140 value 163.151871
+iter 150 value 163.139110
+iter 160 value 163.131269
+iter 170 value 163.127618
+iter 180 value 163.126585
+iter 190 value 163.125352
+final  value 163.125133 
+converged
+[1] "Score = 908 / 3271"
+# weights:  31
+initial  value 13036.643933 
+iter  10 value 795.986911
+iter  20 value 772.799924
+iter  30 value 772.363872
+iter  40 value 770.504181
+iter  50 value 186.957142
+iter  60 value 168.000866
+iter  70 value 163.912154
+iter  80 value 163.572823
+iter  90 value 163.399693
+iter 100 value 163.337502
+iter 110 value 163.307672
+iter 120 value 163.247662
+iter 130 value 163.230871
+iter 140 value 163.215771
+iter 150 value 163.210596
+iter 160 value 163.205401
+iter 170 value 163.194130
+iter 180 value 163.188514
+iter 190 value 163.181447
+iter 200 value 163.179064
+iter 210 value 163.177625
+iter 220 value 163.176926
+iter 230 value 163.176643
+final  value 163.176602 
+converged
+[1] "Score = 906 / 3271"
+# weights:  31
+initial  value 10967.123909 
+iter  10 value 795.431018
+iter  20 value 773.419853
+iter  30 value 773.124301
+iter  40 value 191.162401
+iter  50 value 175.015104
+iter  60 value 169.830103
+iter  70 value 167.079437
+iter  80 value 165.435142
+iter  90 value 164.849109
+iter 100 value 163.682918
+iter 110 value 163.521620
+iter 120 value 163.431034
+iter 130 value 163.368807
+iter 140 value 163.298197
+iter 150 value 163.246077
+iter 160 value 163.201544
+iter 170 value 163.186978
+iter 180 value 163.180844
+iter 190 value 163.167324
+iter 200 value 163.159869
+iter 210 value 163.158891
+iter 220 value 163.158135
+iter 230 value 163.157749
+final  value 163.157683 
+converged
+[1] "Score = 906 / 3271"
+# weights:  31
+initial  value 10561.593147 
+iter  10 value 180.774129
+iter  20 value 167.511195
+iter  30 value 165.833835
+iter  40 value 164.734466
+iter  50 value 163.561067
+iter  60 value 163.371292
+iter  70 value 163.298403
+iter  80 value 163.224260
+iter  90 value 163.179494
+iter 100 value 163.141733
+iter 110 value 163.134468
+iter 120 value 163.128967
+iter 130 value 163.125382
+iter 140 value 163.124117
+iter 150 value 163.123162
+iter 160 value 163.122061
+iter 170 value 163.121373
+iter 180 value 163.121048
+iter 190 value 163.120897
+final  value 163.120875 
+converged
+[1] "Score = 913 / 3271"
+# weights:  31
+initial  value 13388.392036 
+iter  10 value 770.436771
+iter  20 value 199.972692
+iter  30 value 169.556109
+iter  40 value 164.143061
+iter  50 value 163.485362
+iter  60 value 163.361052
+iter  70 value 163.261068
+iter  80 value 163.234765
+iter  90 value 163.198697
+iter 100 value 163.175820
+iter 110 value 163.169285
+iter 120 value 163.165918
+iter 130 value 163.164534
+iter 140 value 163.163417
+iter 150 value 163.162159
+iter 160 value 163.159762
+iter 170 value 163.158865
+iter 180 value 163.158396
+iter 190 value 163.157778
+iter 200 value 163.156881
+final  value 163.156565 
+converged
+[1] "Score = 906 / 3271"
+# weights:  31
+initial  value 15696.074559 
+iter  10 value 801.019173
+iter  20 value 772.757046
+iter  30 value 174.918013
+iter  40 value 171.087380
+iter  50 value 165.956157
+iter  60 value 165.215983
+iter  70 value 164.062517
+iter  80 value 163.460025
+iter  90 value 163.360203
+iter 100 value 163.242758
+iter 110 value 163.191652
+iter 120 value 163.177711
+iter 130 value 163.170366
+iter 140 value 163.168025
+final  value 163.166603 
+converged
+[1] "Score = 1699 / 3271"
+# weights:  31
+initial  value 4082.628694 
+iter  10 value 779.582281
+iter  20 value 773.390958
+iter  30 value 740.182145
+iter  40 value 195.452511
+iter  50 value 181.201603
+iter  60 value 169.902686
+iter  70 value 167.178323
+iter  80 value 164.915695
+iter  90 value 164.007638
+iter 100 value 163.520373
+iter 110 value 163.281849
+iter 120 value 163.196377
+iter 130 value 163.163420
+iter 140 value 163.157551
+iter 150 value 163.148530
+iter 160 value 163.142444
+iter 170 value 163.135061
+iter 180 value 163.131736
+iter 190 value 163.130817
+iter 200 value 163.130226
+iter 210 value 163.129385
+iter 220 value 163.128812
+iter 230 value 163.127744
+iter 240 value 163.127384
+final  value 163.127216 
+converged
+[1] "Score = 911 / 3271"
+# weights:  31
+initial  value 17247.113636 
+iter  10 value 797.968304
+iter  20 value 773.568951
+iter  30 value 773.125196
+iter  40 value 770.601800
+iter  50 value 219.463095
+iter  60 value 194.048817
+iter  70 value 176.157221
+iter  80 value 170.351434
+iter  90 value 166.953072
+iter 100 value 165.419643
+iter 110 value 164.062450
+iter 120 value 163.488542
+iter 130 value 163.378488
+iter 140 value 163.222873
+iter 150 value 163.184543
+iter 160 value 163.151484
+iter 170 value 163.138023
+iter 180 value 163.132011
+iter 190 value 163.129096
+iter 200 value 163.128086
+final  value 163.127639 
+converged
+[1] "Score = 908 / 3271"
+# weights:  31
+initial  value 4406.050347 
+iter  10 value 205.755005
+iter  20 value 176.539886
+iter  30 value 167.339026
+iter  40 value 166.679948
+iter  50 value 165.279830
+iter  60 value 163.888932
+iter  70 value 163.524857
+iter  80 value 163.387969
+iter  90 value 163.277792
+iter 100 value 163.213998
+iter 110 value 163.162829
+iter 120 value 163.141187
+iter 130 value 163.128717
+iter 140 value 163.122641
+iter 150 value 163.121897
+iter 160 value 163.121609
+final  value 163.121590 
+converged
+[1] "Score = 907 / 3271"
+# weights:  31
+initial  value 16153.227555 
+iter  10 value 177.953892
+iter  20 value 176.717521
+iter  30 value 175.793044
+iter  40 value 175.266406
+iter  50 value 174.875471
+iter  60 value 171.091899
+iter  70 value 165.598538
+iter  80 value 164.334566
+iter  90 value 163.606881
+iter 100 value 163.428720
+iter 110 value 163.330019
+iter 120 value 163.289673
+iter 130 value 163.261772
+iter 140 value 163.232137
+iter 150 value 163.193277
+iter 160 value 163.174184
+iter 170 value 163.163657
+iter 180 value 163.146222
+iter 190 value 163.141525
+iter 200 value 163.131124
+iter 210 value 163.125291
+iter 220 value 163.124510
+iter 230 value 163.123465
+iter 240 value 163.122946
+final  value 163.122706 
+converged
+[1] "Score = 908 / 3271"
+# weights:  31
+initial  value 4314.431718 
+iter  10 value 191.741341
+iter  20 value 176.649279
+iter  30 value 175.870131
+iter  40 value 168.561257
+iter  50 value 165.263893
+iter  60 value 164.555800
+iter  70 value 164.052293
+iter  80 value 163.868828
+iter  90 value 163.733016
+iter 100 value 163.626438
+iter 110 value 163.527379
+iter 120 value 163.418405
+iter 130 value 163.351438
+iter 140 value 163.303285
+iter 150 value 163.233713
+iter 160 value 163.176559
+iter 170 value 163.162902
+iter 180 value 163.157296
+iter 190 value 163.153754
+iter 200 value 163.152656
+iter 210 value 163.151552
+iter 220 value 163.146419
+iter 230 value 163.140629
+iter 240 value 163.129681
+iter 250 value 163.123248
+iter 260 value 163.122618
+final  value 163.122593 
+converged
+[1] "Score = 906 / 3271"
+# weights:  31
+initial  value 1973.928375 
+iter  10 value 801.362207
+iter  20 value 770.455258
+iter  30 value 770.128755
+iter  40 value 522.139201
+iter  50 value 178.872777
+iter  60 value 168.087294
+iter  70 value 166.093645
+iter  80 value 163.856414
+iter  90 value 163.546512
+iter 100 value 163.317622
+iter 110 value 163.244770
+iter 120 value 163.186872
+iter 130 value 163.146573
+iter 140 value 163.136425
+iter 150 value 163.130909
+iter 160 value 163.130208
+final  value 163.129021 
+converged
+[1] "Score = 913 / 3271"
+# weights:  31
+initial  value 2716.956818 
+iter  10 value 770.199626
+iter  20 value 176.116444
+iter  30 value 168.211275
+iter  40 value 164.607411
+iter  50 value 163.740420
+iter  60 value 163.547244
+iter  70 value 163.414488
+iter  80 value 163.300739
+iter  90 value 163.202027
+iter 100 value 163.147165
+iter 110 value 163.137415
+iter 120 value 163.127510
+iter 130 value 163.124215
+iter 140 value 163.123441
+iter 150 value 163.122949
+iter 160 value 163.122189
+iter 170 value 163.121374
+iter 180 value 163.121055
+iter 190 value 163.120853
+iter 200 value 163.120767
+final  value 163.120706 
+converged
+[1] "Score = 914 / 3271"
+# weights:  31
+initial  value 10591.088335 
+iter  10 value 770.485999
+iter  20 value 183.594725
+iter  30 value 176.307657
+iter  40 value 175.157746
+iter  50 value 174.769622
+iter  60 value 170.148314
+iter  70 value 166.423097
+iter  80 value 165.713157
+iter  90 value 164.904963
+iter 100 value 163.955782
+iter 110 value 163.394973
+iter 120 value 163.284046
+iter 130 value 163.241431
+iter 140 value 163.194684
+iter 150 value 163.155123
+iter 160 value 163.145123
+iter 170 value 163.132390
+iter 180 value 163.128043
+final  value 163.127762 
+converged
+[1] "Score = 915 / 3271"
+# weights:  31
+initial  value 10780.015256 
+iter  10 value 763.346542
+iter  20 value 557.611879
+iter  30 value 176.392032
+iter  40 value 169.577367
+iter  50 value 166.861393
+iter  60 value 165.566073
+iter  70 value 165.448371
+iter  80 value 165.105608
+iter  90 value 164.578523
+iter 100 value 163.523956
+iter 110 value 163.379345
+iter 120 value 163.266025
+iter 130 value 163.230624
+iter 140 value 163.214769
+iter 150 value 163.204261
+iter 160 value 163.185981
+iter 170 value 163.182796
+iter 180 value 163.181788
+iter 190 value 163.180874
+iter 200 value 163.180291
+iter 210 value 163.179759
+iter 220 value 163.177992
+iter 230 value 163.177378
+iter 240 value 163.177136
+iter 250 value 163.176978
+iter 260 value 163.176753
+final  value 163.176717 
+converged
+[1] "Score = 907 / 3271"
+# weights:  31
+initial  value 11695.388968 
+iter  10 value 191.957046
+iter  20 value 176.296554
+iter  30 value 175.776986
+iter  40 value 175.018730
+iter  50 value 174.803240
+iter  60 value 174.748752
+iter  70 value 174.709302
+iter  80 value 174.702075
+iter  90 value 174.694084
+iter 100 value 174.693360
+iter 110 value 174.692078
+iter 120 value 174.688208
+iter 130 value 174.685659
+iter 140 value 174.683795
+iter 150 value 174.681246
+iter 160 value 174.679726
+iter 170 value 174.677342
+iter 180 value 174.675482
+iter 190 value 174.673835
+iter 200 value 174.673379
+iter 210 value 174.672656
+iter 220 value 174.671656
+iter 230 value 174.671023
+iter 240 value 174.670662
+iter 240 value 174.670660
+iter 240 value 174.670660
+final  value 174.670660 
+converged
+[1] "Score = 527 / 3271"
+# weights:  31
+initial  value 3205.641466 
+iter  10 value 182.362095
+iter  20 value 176.829895
+iter  30 value 175.856137
+iter  40 value 174.734471
+iter  50 value 174.699857
+iter  60 value 174.693349
+iter  70 value 174.688460
+iter  80 value 174.687250
+final  value 174.687040 
+converged
+[1] "Score = 1033 / 3271"
+# weights:  31
+initial  value 19699.590371 
+iter  10 value 180.506550
+iter  20 value 176.359179
+iter  30 value 172.362057
+iter  40 value 167.972622
+iter  50 value 164.722670
+iter  60 value 164.065176
+iter  70 value 163.625395
+iter  80 value 163.436863
+iter  90 value 163.380884
+iter 100 value 163.340078
+iter 110 value 163.290646
+iter 120 value 163.271851
+iter 130 value 163.261222
+iter 140 value 163.252255
+iter 150 value 163.242462
+iter 160 value 163.229659
+iter 170 value 163.214234
+iter 180 value 163.189824
+iter 190 value 163.178586
+iter 200 value 163.166742
+iter 210 value 163.164133
+iter 220 value 163.162991
+iter 230 value 163.161827
+iter 240 value 163.160142
+iter 250 value 163.159534
+iter 260 value 163.158739
+iter 270 value 163.157211
+final  value 163.156292 
+converged
+[1] "Score = 904 / 3271"
+# weights:  31
+initial  value 12557.027757 
+iter  10 value 588.716671
+iter  20 value 477.641262
+iter  30 value 423.317206
+iter  40 value 281.277521
+iter  50 value 186.090387
+iter  60 value 177.660910
+iter  70 value 175.000451
+iter  80 value 173.678787
+iter  90 value 165.551319
+iter 100 value 164.915114
+iter 110 value 163.628121
+iter 120 value 163.325178
+iter 130 value 163.232809
+iter 140 value 163.197966
+iter 150 value 163.183398
+iter 160 value 163.172301
+iter 170 value 163.154989
+iter 180 value 163.150242
+iter 190 value 163.141106
+iter 200 value 163.137598
+iter 210 value 163.134064
+iter 220 value 163.130854
+iter 230 value 163.128629
+iter 240 value 163.128220
+iter 250 value 163.127866
+iter 260 value 163.127699
+final  value 163.127497 
+converged
+[1] "Score = 908 / 3271"
+# weights:  31
+initial  value 14265.426648 
+iter  10 value 177.104601
+iter  20 value 167.517136
+iter  30 value 166.674729
+iter  40 value 164.873966
+iter  50 value 163.922639
+iter  60 value 163.582207
+iter  70 value 163.459892
+iter  80 value 163.358275
+iter  90 value 163.203948
+iter 100 value 163.148395
+iter 110 value 163.134467
+iter 120 value 163.130692
+iter 130 value 163.126738
+final  value 163.126562 
+converged
+[1] "Score = 906 / 3271"
+# weights:  31
+initial  value 11830.796909 
+iter  10 value 770.554220
+iter  20 value 769.813992
+iter  30 value 186.420256
+iter  40 value 166.503836
+iter  50 value 164.776581
+iter  60 value 163.858986
+iter  70 value 163.503546
+iter  80 value 163.372792
+iter  90 value 163.355149
+iter 100 value 163.288744
+iter 110 value 163.245103
+iter 120 value 163.227583
+iter 130 value 163.206327
+iter 140 value 163.198256
+iter 150 value 163.185258
+iter 160 value 163.179992
+iter 170 value 163.174837
+iter 180 value 163.168371
+iter 190 value 163.164364
+iter 200 value 163.161190
+iter 210 value 163.159894
+iter 220 value 163.159085
+iter 230 value 163.158447
+iter 240 value 163.157687
+iter 250 value 163.157158
+iter 260 value 163.156445
+iter 270 value 163.156055
+final  value 163.155835 
+converged
+[1] "Score = 906 / 3271"
+# weights:  31
+initial  value 13124.220549 
+iter  10 value 771.589831
+iter  20 value 770.386822
+iter  30 value 393.871046
+iter  40 value 182.790018
+iter  50 value 175.539745
+iter  60 value 171.057486
+iter  70 value 165.817714
+iter  80 value 164.679825
+iter  90 value 163.545690
+iter 100 value 163.348779
+iter 110 value 163.228126
+iter 120 value 163.171125
+iter 130 value 163.144583
+iter 140 value 163.131361
+iter 150 value 163.128603
+iter 160 value 163.127237
+iter 170 value 163.126070
+iter 180 value 163.125521
+final  value 163.125439 
+converged
+[1] "Score = 908 / 3271"
+# weights:  31
+initial  value 6370.964433 
+iter  10 value 785.244154
+iter  20 value 773.195945
+iter  30 value 772.583374
+iter  40 value 179.273796
+iter  50 value 172.093603
+iter  60 value 170.825810
+iter  70 value 166.863220
+iter  80 value 165.884895
+iter  90 value 165.402031
+iter 100 value 165.067961
+iter 110 value 164.139176
+iter 120 value 163.578204
+iter 130 value 163.406144
+iter 140 value 163.331343
+iter 150 value 163.280643
+iter 160 value 163.254020
+iter 170 value 163.239877
+iter 180 value 163.228987
+iter 190 value 163.224021
+iter 200 value 163.216541
+iter 210 value 163.204660
+iter 220 value 163.197329
+iter 230 value 163.188875
+iter 240 value 163.176344
+iter 250 value 163.163490
+iter 260 value 163.158266
+iter 270 value 163.153431
+iter 280 value 163.151768
+iter 290 value 163.151166
+final  value 163.151031 
+converged
+[1] "Score = 903 / 3271"
+# weights:  31
+initial  value 3698.424323 
+iter  10 value 181.589950
+iter  20 value 175.565156
+iter  30 value 168.061562
+iter  40 value 166.757713
+iter  50 value 166.001087
+iter  60 value 165.236691
+iter  70 value 164.489213
+iter  80 value 163.825246
+iter  90 value 163.616488
+iter 100 value 163.399447
+iter 110 value 163.305983
+iter 120 value 163.240977
+iter 130 value 163.210597
+iter 140 value 163.198641
+iter 150 value 163.193829
+iter 160 value 163.189458
+iter 170 value 163.184591
+iter 180 value 163.182800
+iter 190 value 163.179440
+iter 200 value 163.178209
+iter 210 value 163.176875
+final  value 163.176861 
+converged
+[1] "Score = 1131 / 3271"
+# weights:  31
+initial  value 22175.495981 
+iter  10 value 775.534478
+iter  20 value 770.311901
+iter  30 value 180.649193
+iter  40 value 175.919653
+iter  50 value 175.493147
+iter  60 value 175.148818
+iter  70 value 174.854673
+iter  80 value 174.779137
+iter  90 value 174.735847
+iter 100 value 174.724129
+iter 110 value 174.710115
+iter 120 value 174.702901
+iter 130 value 174.697734
+iter 140 value 174.693834
+iter 150 value 174.692265
+iter 160 value 174.689340
+iter 170 value 174.686741
+iter 180 value 174.685413
+iter 190 value 174.683425
+iter 200 value 174.682154
+iter 210 value 174.678249
+iter 220 value 174.674965
+iter 230 value 174.486028
+iter 240 value 166.921680
+iter 250 value 164.762373
+iter 260 value 163.618012
+iter 270 value 163.296987
+iter 280 value 163.201570
+iter 290 value 163.163665
+iter 300 value 163.152706
+iter 310 value 163.137566
+iter 320 value 163.129770
+iter 330 value 163.125522
+iter 340 value 163.124210
+iter 350 value 163.122916
+iter 360 value 163.122162
+iter 360 value 163.122161
+iter 360 value 163.122161
+final  value 163.122161 
+converged
+[1] "Score = 909 / 3271"
+# weights:  31
+initial  value 5302.307879 
+iter  10 value 190.866852
+iter  20 value 168.817433
+iter  30 value 166.370306
+iter  40 value 165.464168
+iter  50 value 165.246902
+iter  60 value 164.518088
+iter  70 value 164.143869
+iter  80 value 163.761303
+iter  90 value 163.363628
+iter 100 value 163.296718
+iter 110 value 163.267636
+iter 120 value 163.249965
+iter 130 value 163.241801
+iter 140 value 163.239009
+iter 150 value 163.234307
+iter 160 value 163.228424
+iter 170 value 163.216030
+iter 180 value 163.204386
+iter 190 value 163.192326
+iter 200 value 163.177832
+iter 210 value 163.170662
+iter 220 value 163.164536
+iter 230 value 163.163257
+iter 240 value 163.160572
+iter 250 value 163.159733
+iter 260 value 163.158750
+iter 270 value 163.158279
+iter 280 value 163.157579
+iter 290 value 163.157204
+iter 300 value 163.156502
+iter 310 value 163.156013
+iter 320 value 163.155793
+final  value 163.155729 
+converged
+[1] "Score = 906 / 3271"
+# weights:  31
+initial  value 10535.468617 
+iter  10 value 181.198786
+iter  20 value 169.896202
+iter  30 value 166.790134
+iter  40 value 164.638518
+iter  50 value 163.843336
+iter  60 value 163.459389
+iter  70 value 163.313164
+iter  80 value 163.275428
+iter  90 value 163.237960
+iter 100 value 163.220516
+iter 110 value 163.210227
+iter 120 value 163.199063
+iter 130 value 163.186653
+iter 140 value 163.176475
+iter 150 value 163.169114
+iter 160 value 163.163666
+iter 170 value 163.161172
+iter 180 value 163.159707
+iter 190 value 163.158713
+iter 200 value 163.158113
+iter 210 value 163.157610
+iter 220 value 163.157117
+iter 230 value 163.156816
+iter 240 value 163.156171
+iter 250 value 163.155671
+iter 260 value 163.155567
+final  value 163.155525 
+converged
+[1] "Score = 906 / 3271"
+# weights:  31
+initial  value 9346.006009 
+iter  10 value 770.329401
+iter  20 value 494.353234
+iter  30 value 175.271240
+iter  40 value 166.563206
+iter  50 value 165.119580
+iter  60 value 163.739395
+iter  70 value 163.305030
+iter  80 value 163.167077
+iter  90 value 163.146977
+iter 100 value 163.137724
+iter 110 value 163.128667
+iter 120 value 163.125179
+iter 130 value 163.123051
+iter 140 value 163.122731
+iter 150 value 163.122349
+final  value 163.121573 
+converged
+[1] "Score = 907 / 3271"
+# weights:  31
+initial  value 16407.502316 
+iter  10 value 180.877602
+iter  20 value 176.693715
+iter  30 value 168.248301
+iter  40 value 166.133457
+iter  50 value 164.411649
+iter  60 value 163.705254
+iter  70 value 163.360395
+iter  80 value 163.265828
+iter  90 value 163.218663
+iter 100 value 163.189707
+iter 110 value 163.168772
+iter 120 value 163.163319
+iter 130 value 163.156611
+iter 140 value 163.155066
+iter 150 value 163.154581
+iter 160 value 163.152397
+iter 170 value 163.151376
+iter 180 value 163.150964
+iter 190 value 163.150762
+final  value 163.150677 
+converged
+[1] "Score = 903 / 3271"
+# weights:  31
+initial  value 13411.736064 
+iter  10 value 799.674020
+iter  20 value 772.553695
+iter  30 value 771.764890
+iter  40 value 291.540664
+iter  50 value 184.401266
+iter  60 value 169.739011
+iter  70 value 167.154481
+iter  80 value 165.480511
+iter  90 value 165.254315
+iter 100 value 164.978314
+iter 110 value 164.050580
+iter 120 value 163.572518
+iter 130 value 163.384056
+iter 140 value 163.271769
+iter 150 value 163.192390
+iter 160 value 163.156389
+iter 170 value 163.146220
+iter 180 value 163.131504
+iter 190 value 163.128076
+iter 200 value 163.124893
+iter 210 value 163.123474
+iter 220 value 163.122534
+iter 230 value 163.121553
+iter 240 value 163.121124
+final  value 163.121039 
+converged
+[1] "Score = 914 / 3271"
+# weights:  31
+initial  value 12018.692928 
+iter  10 value 794.873834
+iter  20 value 772.763089
+iter  30 value 772.496391
+iter  40 value 771.840312
+iter  50 value 178.743984
+iter  60 value 174.436422
+iter  70 value 167.961342
+iter  80 value 165.936918
+iter  90 value 165.442464
+iter 100 value 165.117995
+iter 110 value 164.585412
+iter 120 value 163.866440
+iter 130 value 163.421756
+iter 140 value 163.355481
+iter 150 value 163.291150
+iter 160 value 163.273447
+iter 170 value 163.258500
+iter 180 value 163.235511
+iter 190 value 163.218821
+iter 200 value 163.189569
+iter 210 value 163.168951
+iter 220 value 163.151707
+iter 230 value 163.138060
+iter 240 value 163.130769
+iter 250 value 163.126722
+iter 260 value 163.123543
+iter 270 value 163.122470
+iter 280 value 163.121855
+iter 290 value 163.121338
+iter 300 value 163.121102
+final  value 163.121005 
+converged
+[1] "Score = 913 / 3271"
+# weights:  31
+initial  value 11009.615816 
+iter  10 value 177.367632
+iter  20 value 176.672898
+iter  30 value 175.067901
+iter  40 value 174.815047
+iter  50 value 174.720952
+iter  60 value 174.695508
+iter  70 value 174.692450
+iter  80 value 174.689625
+iter  90 value 174.689294
+final  value 174.689285 
+converged
+[1] "Score = 602 / 3271"
+# weights:  31
+initial  value 2149.599981 
+iter  10 value 808.234415
+iter  20 value 770.510514
+iter  30 value 770.116134
+iter  40 value 769.542875
+iter  50 value 200.789718
+iter  60 value 177.794438
+iter  70 value 174.886050
+iter  80 value 174.726460
+iter  90 value 174.662721
+iter 100 value 171.916573
+iter 110 value 166.021019
+iter 120 value 165.505308
+iter 130 value 165.164451
+iter 140 value 164.283544
+iter 150 value 163.670783
+iter 160 value 163.422593
+iter 170 value 163.380739
+iter 180 value 163.315103
+iter 190 value 163.271588
+iter 200 value 163.256468
+iter 210 value 163.244836
+iter 220 value 163.231098
+iter 230 value 163.218286
+iter 240 value 163.201914
+iter 250 value 163.183783
+iter 260 value 163.169425
+iter 270 value 163.158200
+iter 280 value 163.145611
+iter 290 value 163.139937
+iter 300 value 163.131838
+iter 310 value 163.127329
+iter 320 value 163.126344
+iter 330 value 163.125655
+iter 340 value 163.125395
+final  value 163.125374 
+converged
+[1] "Score = 907 / 3271"
+# weights:  31
+initial  value 2961.798445 
+iter  10 value 420.790880
+iter  20 value 185.819025
+iter  30 value 176.265014
+iter  40 value 175.782294
+iter  50 value 174.824265
+iter  60 value 174.774094
+iter  70 value 174.743278
+iter  80 value 174.727299
+iter  90 value 174.719405
+iter 100 value 174.712418
+iter 110 value 174.705503
+iter 120 value 174.699814
+iter 130 value 174.696777
+iter 140 value 174.695704
+iter 150 value 174.694913
+iter 150 value 174.694913
+final  value 174.694913 
+converged
+[1] "Score = 1434 / 3271"
+# weights:  31
+initial  value 20976.305182 
+iter  10 value 853.639892
+iter  20 value 771.656913
+iter  30 value 175.555879
+iter  40 value 169.025206
+iter  50 value 167.791568
+iter  60 value 167.049176
+iter  70 value 166.611061
+iter  80 value 166.096932
+iter  90 value 165.449283
+iter 100 value 164.174071
+iter 110 value 163.914332
+iter 120 value 163.665803
+iter 130 value 163.519660
+iter 140 value 163.325192
+iter 150 value 163.238017
+iter 160 value 163.193291
+iter 170 value 163.148538
+iter 180 value 163.135924
+iter 190 value 163.129765
+iter 200 value 163.126408
+iter 210 value 163.125137
+final  value 163.125116 
+converged
+[1] "Score = 914 / 3271"
+# weights:  31
+initial  value 8182.970791 
+iter  10 value 771.835101
+iter  20 value 629.869352
+iter  30 value 176.571973
+iter  40 value 166.981962
+iter  50 value 165.730778
+iter  60 value 164.725243
+iter  70 value 163.887303
+iter  80 value 163.551251
+iter  90 value 163.443004
+iter 100 value 163.362932
+iter 110 value 163.289629
+iter 120 value 163.255935
+iter 130 value 163.227749
+iter 140 value 163.207044
+iter 150 value 163.194013
+iter 160 value 163.181315
+iter 170 value 163.161390
+iter 180 value 163.156866
+iter 190 value 163.153469
+iter 200 value 163.152745
+iter 210 value 163.152392
+final  value 163.152344 
+converged
+[1] "Score = 906 / 3271"
+# weights:  31
+initial  value 20879.549610 
+iter  10 value 768.972890
+iter  20 value 238.141783
+iter  30 value 204.854416
+iter  40 value 171.284003
+iter  50 value 166.990960
+iter  60 value 166.239278
+iter  70 value 165.234884
+iter  80 value 164.075291
+iter  90 value 163.782019
+iter 100 value 163.479073
+iter 110 value 163.322617
+iter 120 value 163.228732
+iter 130 value 163.206573
+iter 140 value 163.186860
+iter 150 value 163.162978
+iter 160 value 163.152976
+iter 170 value 163.142031
+iter 180 value 163.134949
+iter 190 value 163.128677
+iter 200 value 163.124988
+iter 210 value 163.123653
+iter 220 value 163.122652
+iter 230 value 163.122003
+iter 240 value 163.121630
+iter 250 value 163.121340
+iter 260 value 163.120912
+iter 270 value 163.120734
+final  value 163.120671 
+converged
+[1] "Score = 914 / 3271"
+# weights:  31
+initial  value 3253.598419 
+iter  10 value 776.542881
+iter  20 value 763.124101
+iter  30 value 184.333942
+iter  40 value 177.471317
+iter  50 value 171.762372
+iter  60 value 169.313807
+iter  70 value 166.108607
+iter  80 value 165.692648
+iter  90 value 165.269319
+iter 100 value 165.169860
+iter 110 value 164.654525
+iter 120 value 163.492554
+iter 130 value 163.315705
+iter 140 value 163.201415
+iter 150 value 163.181887
+iter 160 value 163.162679
+iter 170 value 163.140079
+iter 180 value 163.132908
+iter 190 value 163.126735
+iter 200 value 163.124533
+iter 210 value 163.122493
+iter 220 value 163.121758
+iter 230 value 163.121516
+final  value 163.121490 
+converged
+[1] "Score = 913 / 3271"
+# weights:  31
+initial  value 19028.594454 
+iter  10 value 189.738135
+iter  20 value 177.810052
+iter  30 value 176.137019
+iter  40 value 175.354505
+iter  50 value 174.960936
+iter  60 value 174.808104
+iter  70 value 174.771702
+iter  80 value 174.732490
+iter  90 value 174.709341
+iter 100 value 174.692221
+iter 110 value 174.689487
+iter 120 value 174.688662
+iter 130 value 174.688146
+iter 140 value 174.687470
+iter 150 value 174.685798
+iter 160 value 174.684728
+iter 170 value 174.682875
+iter 180 value 174.681675
+iter 190 value 174.679651
+iter 200 value 174.678953
+iter 210 value 174.674539
+iter 220 value 174.672098
+iter 230 value 174.670403
+iter 240 value 174.669110
+final  value 174.668613 
+converged
+[1] "Score = 330 / 3271"
+# weights:  31
+initial  value 7668.054429 
+iter  10 value 790.344183
+iter  20 value 772.738833
+iter  30 value 772.488952
+iter  40 value 772.299169
+iter  50 value 761.613234
+iter  60 value 197.249658
+iter  70 value 176.617400
+iter  80 value 172.073509
+iter  90 value 168.117545
+iter 100 value 166.090629
+iter 110 value 165.290483
+iter 120 value 163.917867
+iter 130 value 163.384254
+iter 140 value 163.267078
+iter 150 value 163.222950
+iter 160 value 163.198599
+iter 170 value 163.177724
+iter 180 value 163.162881
+iter 190 value 163.159504
+iter 200 value 163.147457
+iter 210 value 163.139244
+iter 220 value 163.134185
+iter 230 value 163.128545
+iter 240 value 163.126516
+iter 250 value 163.125360
+iter 260 value 163.125267
+iter 260 value 163.125266
+iter 260 value 163.125266
+final  value 163.125266 
+converged
+[1] "Score = 911 / 3271"
+# weights:  31
+initial  value 1908.397400 
+iter  10 value 801.071634
+iter  20 value 770.427422
+iter  30 value 200.711729
+iter  40 value 174.729003
+iter  50 value 166.509927
+iter  60 value 164.014504
+iter  70 value 163.499831
+iter  80 value 163.337961
+iter  90 value 163.270270
+iter 100 value 163.235680
+iter 110 value 163.181794
+iter 120 value 163.161530
+iter 130 value 163.157286
+iter 140 value 163.154158
+iter 150 value 163.153200
+final  value 163.153157 
+converged
+[1] "Score = 903 / 3271"
+# weights:  31
+initial  value 7075.377410 
+iter  10 value 786.630221
+iter  20 value 773.386698
+iter  30 value 772.275270
+iter  40 value 575.371947
+iter  50 value 187.320994
+iter  60 value 177.696376
+iter  70 value 167.676401
+iter  80 value 166.507992
+iter  90 value 166.005689
+iter 100 value 165.436731
+iter 110 value 164.926131
+iter 120 value 163.832903
+iter 130 value 163.452111
+iter 140 value 163.282041
+iter 150 value 163.206033
+iter 160 value 163.179481
+iter 170 value 163.166754
+iter 180 value 163.161130
+iter 190 value 163.159095
+iter 200 value 163.153584
+iter 210 value 163.151700
+iter 220 value 163.151110
+iter 230 value 163.150850
+final  value 163.150805 
+converged
+[1] "Score = 903 / 3271"
+# weights:  31
+initial  value 4312.680139 
+iter  10 value 780.032591
+iter  20 value 772.772504
+iter  30 value 772.423755
+iter  40 value 710.594516
+iter  50 value 179.961338
+iter  60 value 176.033079
+iter  70 value 175.040238
+iter  80 value 174.881315
+iter  90 value 174.789567
+iter 100 value 174.740243
+iter 110 value 174.726822
+iter 120 value 174.708694
+iter 130 value 174.699251
+iter 140 value 174.693344
+iter 150 value 174.690672
+iter 160 value 174.689464
+iter 170 value 174.688101
+iter 180 value 174.685042
+iter 190 value 174.681264
+iter 200 value 174.675622
+iter 210 value 174.673025
+iter 220 value 174.671569
+iter 230 value 174.671045
+iter 240 value 174.670711
+final  value 174.670584 
+converged
+[1] "Score = 524 / 3271"
+# weights:  31
+initial  value 4858.075908 
+iter  10 value 780.246238
+iter  20 value 772.692553
+iter  30 value 769.047142
+iter  40 value 198.490299
+iter  50 value 188.552828
+iter  60 value 178.505150
+iter  70 value 174.772265
+iter  80 value 172.482010
+iter  90 value 165.882189
+iter 100 value 164.164957
+iter 110 value 163.684650
+iter 120 value 163.406480
+iter 130 value 163.240427
+iter 140 value 163.147999
+iter 150 value 163.134785
+iter 160 value 163.128458
+iter 170 value 163.126323
+iter 180 value 163.125587
+final  value 163.125166 
+converged
+[1] "Score = 907 / 3271"
+# weights:  31
+initial  value 7059.459311 
+iter  10 value 325.483957
+iter  20 value 185.468543
+iter  30 value 175.522204
+iter  40 value 175.039511
+iter  50 value 174.796686
+iter  60 value 174.745688
+iter  70 value 174.723410
+iter  80 value 174.711631
+iter  90 value 174.705778
+iter 100 value 174.700087
+iter 110 value 174.696409
+iter 120 value 174.693471
+iter 130 value 174.691413
+iter 140 value 174.690402
+iter 150 value 174.688573
+iter 160 value 174.685849
+iter 170 value 174.684539
+iter 180 value 174.683196
+iter 190 value 174.678865
+iter 200 value 174.675229
+iter 210 value 174.673802
+iter 220 value 174.672432
+iter 230 value 174.671041
+iter 240 value 174.670477
+iter 250 value 174.670155
+final  value 174.670136 
+converged
+[1] "Score = 583 / 3271"
+# weights:  31
+initial  value 9099.507382 
+iter  10 value 792.748820
+iter  20 value 763.248013
+iter  30 value 183.757932
+iter  40 value 171.512749
+iter  50 value 168.168173
+iter  60 value 166.470647
+iter  70 value 164.945830
+iter  80 value 163.718976
+iter  90 value 163.347529
+iter 100 value 163.218009
+iter 110 value 163.189389
+iter 120 value 163.176210
+iter 130 value 163.157854
+iter 140 value 163.145105
+iter 150 value 163.142501
+iter 160 value 163.135657
+iter 170 value 163.128739
+iter 180 value 163.125809
+iter 190 value 163.123658
+iter 200 value 163.122703
+iter 210 value 163.121991
+iter 220 value 163.121502
+iter 230 value 163.121278
+final  value 163.121132 
+converged
+[1] "Score = 914 / 3271"
+# weights:  31
+initial  value 3156.476698 
+iter  10 value 178.170479
+iter  20 value 165.707697
+iter  30 value 164.997589
+iter  40 value 164.276114
+iter  50 value 163.729432
+iter  60 value 163.540481
+iter  70 value 163.510826
+iter  80 value 163.424934
+iter  90 value 163.305676
+iter 100 value 163.227796
+iter 110 value 163.180193
+iter 120 value 163.162334
+iter 130 value 163.159880
+iter 140 value 163.156503
+iter 150 value 163.154100
+iter 160 value 163.153488
+iter 170 value 163.152678
+iter 180 value 163.152142
+iter 190 value 163.149593
+iter 200 value 163.145844
+iter 210 value 163.142538
+iter 220 value 163.128601
+iter 230 value 163.123889
+iter 240 value 163.121987
+iter 250 value 163.120789
+final  value 163.120727 
+converged
+[1] "Score = 914 / 3271"
+# weights:  31
+initial  value 6111.261960 
+iter  10 value 770.358623
+iter  20 value 448.168281
+iter  30 value 180.878888
+iter  40 value 178.200830
+iter  50 value 177.379513
+iter  60 value 175.894548
+iter  70 value 175.209463
+iter  80 value 174.918535
+iter  90 value 174.828942
+iter 100 value 174.740980
+iter 110 value 174.724437
+iter 120 value 174.714288
+iter 130 value 174.705751
+iter 140 value 174.704155
+iter 150 value 174.703499
+iter 160 value 174.702751
+iter 170 value 174.701872
+final  value 174.701806 
+converged
+[1] "Score = 1522 / 3271"
+# weights:  31
+initial  value 14942.918497 
+iter  10 value 191.393072
+iter  20 value 167.747874
+iter  30 value 166.406579
+iter  40 value 165.715038
+iter  50 value 164.662370
+iter  60 value 163.793090
+iter  70 value 163.683144
+iter  80 value 163.373003
+iter  90 value 163.171504
+iter 100 value 163.147938
+iter 110 value 163.131076
+iter 120 value 163.127670
+iter 130 value 163.123847
+final  value 163.123840 
+converged
+[1] "Score = 914 / 3271"
+# weights:  31
+initial  value 5951.726084 
+iter  10 value 181.777344
+iter  20 value 176.453807
+iter  30 value 174.811927
+iter  40 value 174.758142
+iter  50 value 174.717567
+iter  60 value 174.700077
+iter  70 value 174.690160
+iter  80 value 174.684379
+iter  90 value 174.682152
+iter 100 value 174.680678
+iter 110 value 174.678464
+iter 120 value 174.676958
+iter 130 value 174.673739
+iter 140 value 174.672878
+iter 150 value 174.671691
+iter 160 value 174.670854
+iter 170 value 174.670444
+final  value 174.670393 
+converged
+[1] "Score = 557 / 3271"
+# weights:  31
+initial  value 4526.260343 
+iter  10 value 772.798680
+iter  20 value 772.658319
+iter  30 value 747.129270
+iter  40 value 203.559402
+iter  50 value 178.632590
+iter  60 value 176.818223
+iter  70 value 172.184271
+iter  80 value 165.988815
+iter  90 value 165.255742
+iter 100 value 163.757671
+iter 110 value 163.402536
+iter 120 value 163.258045
+iter 130 value 163.207312
+iter 140 value 163.191457
+iter 150 value 163.167283
+iter 160 value 163.153909
+iter 170 value 163.141581
+iter 180 value 163.130607
+iter 190 value 163.126887
+iter 200 value 163.124620
+iter 210 value 163.122531
+iter 220 value 163.121555
+iter 230 value 163.121156
+iter 240 value 163.120907
+final  value 163.120708 
+converged
+[1] "Score = 913 / 3271"
+# weights:  31
+initial  value 13881.823631 
+iter  10 value 801.415106
+iter  20 value 203.142104
+iter  30 value 176.767510
+iter  40 value 170.706013
+iter  50 value 168.358015
+iter  60 value 167.526797
+iter  70 value 166.889016
+iter  80 value 165.989428
+iter  90 value 165.305041
+iter 100 value 164.393496
+iter 110 value 163.591424
+iter 120 value 163.480787
+iter 130 value 163.311863
+iter 140 value 163.173442
+iter 150 value 163.151034
+iter 160 value 163.134442
+iter 170 value 163.129680
+iter 180 value 163.125773
+iter 190 value 163.124173
+iter 200 value 163.122316
+iter 210 value 163.121520
+iter 220 value 163.120942
+final  value 163.120832 
+converged
+[1] "Score = 912 / 3271"
+# weights:  31
+initial  value 10702.565351 
+iter  10 value 794.253794
+iter  20 value 772.883390
+iter  30 value 472.462480
+iter  40 value 178.020054
+iter  50 value 167.898030
+iter  60 value 166.487671
+iter  70 value 165.057695
+iter  80 value 164.486496
+iter  90 value 164.048878
+iter 100 value 163.665262
+iter 110 value 163.354559
+iter 120 value 163.213157
+iter 130 value 163.184535
+iter 140 value 163.163484
+iter 150 value 163.152446
+iter 160 value 163.142989
+iter 170 value 163.139497
+iter 180 value 163.136396
+iter 190 value 163.132475
+iter 200 value 163.130778
+iter 210 value 163.128588
+iter 220 value 163.128299
+iter 230 value 163.127571
+iter 240 value 163.127360
+iter 250 value 163.127140
+iter 250 value 163.127138
+iter 250 value 163.127138
+final  value 163.127138 
+converged
+[1] "Score = 909 / 3271"
+# weights:  31
+initial  value 8498.390395 
+iter  10 value 790.150734
+iter  20 value 773.051360
+iter  30 value 732.605999
+iter  40 value 195.047333
+iter  50 value 177.019838
+iter  60 value 173.696845
+iter  70 value 167.015372
+iter  80 value 166.013929
+iter  90 value 164.212438
+iter 100 value 163.552781
+iter 110 value 163.418434
+iter 120 value 163.292951
+iter 130 value 163.267935
+iter 140 value 163.222764
+iter 150 value 163.179789
+iter 160 value 163.168505
+iter 170 value 163.156574
+iter 180 value 163.154348
+iter 190 value 163.153344
+iter 200 value 163.151562
+iter 210 value 163.150991
+iter 220 value 163.150770
+iter 230 value 163.150664
+final  value 163.150622 
+converged
+[1] "Score = 904 / 3271"
+# weights:  31
+initial  value 8080.565498 
+iter  10 value 181.794233
+iter  20 value 168.816870
+iter  30 value 167.533868
+iter  40 value 165.575050
+iter  50 value 164.959405
+iter  60 value 163.910428
+iter  70 value 163.588462
+iter  80 value 163.453619
+iter  90 value 163.287551
+iter 100 value 163.195381
+iter 110 value 163.160360
+iter 120 value 163.141147
+iter 130 value 163.133630
+iter 140 value 163.130970
+iter 150 value 163.128966
+iter 160 value 163.128187
+iter 170 value 163.127501
+iter 180 value 163.127171
+final  value 163.126963 
+converged
+[1] "Score = 908 / 3271"
+# weights:  31
+initial  value 23778.481904 
+iter  10 value 875.948189
+iter  20 value 780.067395
+iter  30 value 187.632558
+iter  40 value 179.371131
+iter  50 value 169.263316
+iter  60 value 167.733448
+iter  70 value 165.556427
+iter  80 value 164.547289
+iter  90 value 163.887235
+iter 100 value 163.671171
+iter 110 value 163.540163
+iter 120 value 163.358521
+iter 130 value 163.259265
+iter 140 value 163.233138
+iter 150 value 163.211893
+iter 160 value 163.195571
+iter 170 value 163.187414
+iter 180 value 163.179553
+iter 190 value 163.159453
+iter 200 value 163.147214
+iter 210 value 163.140731
+iter 220 value 163.132330
+iter 230 value 163.131848
+iter 240 value 163.130047
+iter 250 value 163.129160
+iter 260 value 163.128068
+iter 270 value 163.127589
+iter 280 value 163.127300
+final  value 163.127295 
+converged
+[1] "Score = 908 / 3271"
+# weights:  31
+initial  value 8529.726806 
+iter  10 value 770.706218
+iter  20 value 252.598140
+iter  30 value 172.209243
+iter  40 value 166.046224
+iter  50 value 164.343113
+iter  60 value 163.478646
+iter  70 value 163.327879
+iter  80 value 163.201864
+iter  90 value 163.184618
+iter 100 value 163.148826
+iter 110 value 163.135297
+iter 120 value 163.127677
+iter 130 value 163.124515
+iter 140 value 163.123192
+iter 150 value 163.122339
+iter 160 value 163.122212
+iter 170 value 163.121942
+iter 180 value 163.121729
+iter 190 value 163.121391
+iter 200 value 163.120915
+iter 210 value 163.120697
+final  value 163.120670 
+converged
+[1] "Score = 914 / 3271"
+# weights:  31
+initial  value 1919.204846 
+iter  10 value 773.812795
+iter  20 value 772.519252
+iter  30 value 772.383925
+iter  40 value 772.132016
+iter  50 value 760.706415
+iter  60 value 268.358016
+iter  70 value 173.834712
+iter  80 value 168.122155
+iter  90 value 166.614814
+iter 100 value 165.855718
+iter 110 value 165.116453
+iter 120 value 163.616235
+iter 130 value 163.437655
+iter 140 value 163.292561
+iter 150 value 163.178573
+iter 160 value 163.150528
+iter 170 value 163.140475
+iter 180 value 163.128673
+iter 190 value 163.126328
+iter 200 value 163.123588
+iter 210 value 163.122443
+iter 220 value 163.121930
+iter 230 value 163.121301
+final  value 163.121139 
+converged
+[1] "Score = 913 / 3271"
+# weights:  31
+initial  value 9913.028628 
+iter  10 value 793.103300
+iter  20 value 772.298138
+iter  30 value 709.594380
+iter  40 value 192.206646
+iter  50 value 175.350643
+iter  60 value 168.228835
+iter  70 value 165.760292
+iter  80 value 164.808610
+iter  90 value 163.854865
+iter 100 value 163.319106
+iter 110 value 163.231930
+iter 120 value 163.205736
+iter 130 value 163.166559
+iter 140 value 163.141760
+iter 150 value 163.133425
+iter 160 value 163.130116
+iter 170 value 163.127902
+final  value 163.127294 
+converged
+[1] "Score = 907 / 3271"
+# weights:  31
+initial  value 12450.123024 
+iter  10 value 796.048123
+iter  20 value 773.016055
+iter  30 value 771.543704
+iter  40 value 178.669037
+iter  50 value 177.779902
+iter  60 value 176.077396
+iter  70 value 174.984958
+iter  80 value 174.860048
+iter  90 value 174.794509
+iter 100 value 174.753229
+iter 110 value 174.731659
+iter 120 value 174.716054
+iter 130 value 174.708742
+iter 140 value 174.704452
+iter 150 value 174.698623
+iter 160 value 174.694797
+iter 170 value 174.693106
+final  value 174.692850 
+converged
+[1] "Score = 1422 / 3271"
+# weights:  31
+initial  value 11031.650933 
+iter  10 value 797.955557
+iter  20 value 773.770705
+iter  30 value 771.692675
+iter  40 value 191.623074
+iter  50 value 181.960807
+iter  60 value 173.381044
+iter  70 value 167.301249
+iter  80 value 165.687836
+iter  90 value 164.476936
+iter 100 value 163.959048
+iter 110 value 163.633674
+iter 120 value 163.385363
+iter 130 value 163.290679
+iter 140 value 163.260151
+iter 150 value 163.211411
+iter 160 value 163.189560
+iter 170 value 163.182218
+iter 180 value 163.177853
+iter 190 value 163.173406
+iter 200 value 163.166116
+iter 210 value 163.156310
+iter 220 value 163.152946
+iter 230 value 163.151510
+final  value 163.151290 
+converged
+[1] "Score = 904 / 3271"
+# weights:  31
+initial  value 16028.528656 
+iter  10 value 798.196389
+iter  20 value 773.100986
+iter  30 value 772.798187
+iter  40 value 771.093777
+iter  50 value 178.085008
+iter  60 value 176.400310
+iter  70 value 169.055050
+iter  80 value 165.851195
+iter  90 value 164.980652
+iter 100 value 163.761139
+iter 110 value 163.473015
+iter 120 value 163.269935
+iter 130 value 163.214730
+iter 140 value 163.194228
+iter 150 value 163.170135
+iter 160 value 163.158110
+iter 170 value 163.155053
+iter 180 value 163.154115
+iter 190 value 163.153491
+final  value 163.153414 
+converged
+[1] "Score = 903 / 3271"
+# weights:  31
+initial  value 21437.058538 
+iter  10 value 812.538489
+iter  20 value 330.905798
+iter  30 value 176.933181
+iter  40 value 175.067392
+iter  50 value 174.867746
+iter  60 value 174.734372
+iter  70 value 174.724620
+iter  80 value 174.708315
+iter  90 value 174.693275
+iter 100 value 174.686104
+iter 110 value 174.677449
+iter 120 value 174.674166
+iter 130 value 174.671520
+iter 140 value 174.670723
+final  value 174.670614 
+converged
+[1] "Score = 589 / 3271"
+# weights:  31
+initial  value 3308.798125 
+iter  10 value 769.830172
+iter  20 value 180.677290
+iter  30 value 170.899199
+iter  40 value 165.657069
+iter  50 value 164.123645
+iter  60 value 163.522306
+iter  70 value 163.362652
+iter  80 value 163.223041
+iter  90 value 163.182076
+iter 100 value 163.155587
+iter 110 value 163.133504
+iter 120 value 163.128194
+iter 130 value 163.126668
+iter 140 value 163.125923
+iter 150 value 163.125474
+final  value 163.125440 
+converged
+[1] "Score = 906 / 3271"
+# weights:  31
+initial  value 13783.610912 
+iter  10 value 770.369444
+iter  20 value 186.396537
+iter  30 value 179.909715
+iter  40 value 176.740596
+iter  50 value 174.994033
+iter  60 value 174.809538
+iter  70 value 174.715465
+iter  80 value 174.694523
+iter  90 value 174.690252
+iter 100 value 174.685540
+iter 110 value 174.684062
+iter 120 value 174.681248
+iter 130 value 174.679079
+iter 140 value 174.676221
+iter 150 value 174.673257
+iter 160 value 174.671093
+iter 170 value 174.669905
+iter 180 value 174.669430
+iter 190 value 174.668043
+iter 200 value 174.662768
+iter 210 value 174.553754
+iter 220 value 169.268001
+iter 230 value 165.712049
+iter 240 value 165.432978
+iter 250 value 164.844410
+iter 260 value 164.178559
+iter 270 value 163.704476
+iter 280 value 163.554021
+iter 290 value 163.444134
+iter 300 value 163.328834
+iter 310 value 163.227405
+iter 320 value 163.191040
+iter 330 value 163.166932
+iter 340 value 163.149257
+iter 350 value 163.142651
+iter 360 value 163.137398
+iter 370 value 163.132401
+iter 380 value 163.129089
+iter 390 value 163.126422
+iter 400 value 163.125670
+final  value 163.125494 
+converged
+[1] "Score = 908 / 3271"
+# weights:  31
+initial  value 8976.531596 
+iter  10 value 790.156246
+iter  20 value 704.816863
+iter  30 value 174.577847
+iter  40 value 168.591361
+iter  50 value 167.529036
+iter  60 value 165.830512
+iter  70 value 165.542655
+iter  80 value 164.782370
+iter  90 value 163.586419
+iter 100 value 163.385160
+iter 110 value 163.253648
+iter 120 value 163.195366
+iter 130 value 163.163511
+iter 140 value 163.152042
+iter 150 value 163.144312
+iter 160 value 163.134639
+iter 170 value 163.127509
+iter 180 value 163.124704
+iter 190 value 163.123447
+iter 200 value 163.122873
+iter 210 value 163.122615
+iter 220 value 163.122329
+iter 230 value 163.122089
+iter 240 value 163.121751
+iter 250 value 163.121193
+final  value 163.121099 
+converged
+[1] "Score = 911 / 3271"
+# weights:  31
+initial  value 8678.599428 
+iter  10 value 180.657360
+iter  20 value 176.265819
+iter  30 value 175.495622
+iter  40 value 174.840706
+iter  50 value 174.736830
+iter  60 value 174.715270
+iter  70 value 174.703879
+iter  80 value 174.700344
+iter  90 value 174.696638
+iter 100 value 174.694949
+iter 110 value 174.693582
+iter 120 value 174.690822
+iter 130 value 174.688099
+iter 140 value 174.686811
+iter 150 value 174.684415
+iter 160 value 174.681285
+iter 170 value 174.676981
+iter 180 value 174.675847
+iter 190 value 174.666358
+iter 200 value 171.911354
+iter 210 value 166.552007
+iter 220 value 165.422468
+iter 230 value 165.208468
+iter 240 value 164.683831
+iter 250 value 163.758488
+iter 260 value 163.587489
+iter 270 value 163.519247
+iter 280 value 163.429999
+iter 290 value 163.355631
+iter 300 value 163.271316
+iter 310 value 163.181504
+iter 320 value 163.156560
+iter 330 value 163.145209
+iter 340 value 163.129617
+iter 350 value 163.126006
+iter 360 value 163.124189
+iter 370 value 163.122906
+iter 380 value 163.122390
+iter 390 value 163.121713
+iter 400 value 163.121522
+iter 410 value 163.121365
+iter 420 value 163.121209
+iter 430 value 163.121011
+iter 440 value 163.120871
+final  value 163.120798 
+converged
+[1] "Score = 913 / 3271"
+> 
+> 
+> proc.time()
+   user  system elapsed 
+968.837   6.408 979.108 
